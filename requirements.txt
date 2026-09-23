@@ -1,0 +1,21 @@
+# LocalTTS v3.1 – Kokoro TTS backend
+# GUI: Tkinter (stdlib – nothing to install)
+#
+# The startup dialog installs all packages automatically.
+# Or install manually:
+#   pip install kokoro-onnx onnxruntime soundfile numpy espeakng-loader phonemizer-fork requests
+
+# Kokoro TTS engine (Apache 2.0, state-of-the-art quality)
+kokoro-onnx
+
+# Runtime
+onnxruntime
+
+# Audio output
+soundfile
+
+# Core deps (pulled in by kokoro-onnx, listed explicitly for clarity)
+numpy
+espeakng-loader
+phonemizer-fork
+requests
