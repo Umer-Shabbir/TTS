@@ -1,20 +1,27 @@
-# LocalTTS v3.1 – Kokoro TTS backend
+# LocalTTS v3.1 – Kokoro, Piper & Edge-TTS backends
 # GUI: Tkinter (stdlib – nothing to install)
 #
 # The startup dialog installs all packages automatically.
 # Or install manually:
-#   pip install kokoro-onnx onnxruntime soundfile numpy espeakng-loader phonemizer-fork requests
+#   pip install kokoro-onnx onnxruntime soundfile numpy espeakng-loader phonemizer-fork requests piper-tts edge-tts
 
-# Kokoro TTS engine (Apache 2.0, state-of-the-art quality)
+# Kokoro TTS engine (Apache 2.0, state-of-the-art quality for English)
 kokoro-onnx
+
+# Piper TTS engine (Fast, lightweight, offline CPU-based multilingual TTS)
+piper-tts
+
+# Edge-TTS engine (Free Microsoft Edge online TTS for Urdu and multilingual)
+edge-tts
 
 # Runtime
 onnxruntime
 
-# Audio output
+# Audio output & DSP enhancement
 soundfile
+scipy
 
-# Core deps (pulled in by kokoro-onnx, listed explicitly for clarity)
+# Core deps (pulled in by dependencies, listed explicitly for clarity)
 numpy
 espeakng-loader
 phonemizer-fork

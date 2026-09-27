@@ -1,14 +1,12 @@
 """
-ui/folder_paste_dialog.py – Paste project folder paths modal (Image Automation style).
-
-Allows the user to paste absolute paths to project folders (one per line)
-into a text area, exactly like the Image Automation tool.
+ui/folder_picker.py – Folder selector and path paster for LocalTTS.
+Provides both native OS Directory Picker and Paste Modal for adding project folders.
 """
 from __future__ import annotations
 
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
+from tkinter import ttk, filedialog
 from typing import List, Optional
 
 import ui.theme as T
@@ -16,17 +14,17 @@ import ui.theme as T
 
 class FolderPasteDialog:
     """
-    Modal dialog for pasting project folder paths (one per line).
+    Modal dialog for pasting project folder paths (one per line) or browsing folders.
     """
 
-    def __init__(self, parent: tk.Misc, title: str = "Add Project Folders"):
+    def __init__(self, parent: tk.Misc, title: str = "Select Project Folders"):
         self._parent = parent
         self._result: List[Path] = []
 
         win = self._w = tk.Toplevel(parent)
         win.title(title)
         win.configure(bg=T.BG)
-        win.geometry("720x540")
+        win.geometry("740x540")
         win.minsize(560, 420)
         win.resizable(True, True)
         win.transient(parent)
@@ -35,7 +33,7 @@ class FolderPasteDialog:
         # Centre on screen
         win.update_idletasks()
         sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-        w, h = 720, 540
+        w, h = 740, 540
         win.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
 
         self._build()
@@ -48,11 +46,11 @@ class FolderPasteDialog:
         # Header
         hdr = tk.Frame(win, bg=T.ACCENT, padx=16, pady=12)
         hdr.pack(fill="x")
-        tk.Label(hdr, text="📁  Add Project Folders by Path",
+        tk.Label(hdr, text="📁  Add Project Folders",
                  bg=T.ACCENT, fg="white",
                  font=("Segoe UI", 13, "bold")).pack(side="left")
 
-        # Bottom Action Bar (placed first or packed properly so it's always visible)
+        # Bottom Action Bar
         bot = tk.Frame(win, bg=T.SURFACE, padx=16, pady=12)
         bot.pack(fill="x", side="bottom")
         tk.Frame(win, bg=T.BORDER, height=1).pack(fill="x", side="bottom")
@@ -60,13 +58,15 @@ class FolderPasteDialog:
         self._mkbtn(bot, "Cancel", self._cancel,
                     bg=T.CARD, fg=T.TEXT2, hover=T.CARD_HVR, padx=16, pady=8).pack(side="right", padx=(8, 0))
 
-        # Big Prominent Save & Add to Queue button
-        self._mkbtn(bot, "💾 Save & Add to Queue", self._confirm,
+        # Save & Add to Queue button
+        self._mkbtn(bot, "💾 Add to Queue", self._confirm,
                     bg=T.SUCCESS, fg="#051a10", hover=T.SUCCESS_L,
                     font=("Segoe UI", 11, "bold"), padx=20, pady=8).pack(side="right")
 
-        tk.Label(bot, text="Paste one path per line", bg=T.SURFACE, fg=T.TEXT3,
-                 font=("Segoe UI", 9)).pack(side="left")
+        # Browse Directory Button
+        self._mkbtn(bot, "📂 Browse Folder Dialog...", self._browse_single_folder,
+                    bg=T.ACCENT, fg="white", hover=T.ACCENT_L,
+                    font=("Segoe UI", 10, "bold"), padx=14, pady=8).pack(side="left")
 
         # Body
         body = tk.Frame(win, bg=T.BG, padx=18, pady=14)
@@ -76,7 +76,7 @@ class FolderPasteDialog:
 
         tk.Label(
             body,
-            text="Enter or paste absolute paths to project folders (one per line):\nEach folder must contain a script.txt file.",
+            text="Paste project folder paths (one per line) or use 'Browse Folder Dialog':\nEach folder must contain a script.txt file.",
             bg=T.BG, fg=T.TEXT2, font=("Segoe UI", 9), justify="left"
         ).grid(row=0, column=0, sticky="w", pady=(0, 8))
 
@@ -103,10 +103,19 @@ class FolderPasteDialog:
         vsb.grid(row=0, column=1, sticky="ns")
         hsb.grid(row=1, column=0, sticky="ew")
 
-        # Example placeholder / tip
-        self._text.insert("1.0", r"H:\Automation\output\project_alpha" + "\n" + r"H:\Automation\output\project_beta")
+        # Example placeholder
+        self._text.insert("1.0", r"H:\Automation\output\my_project")
         self._text.tag_add("sel", "1.0", "end-1c")
         self._text.focus_set()
+
+    def _browse_single_folder(self):
+        d = filedialog.askdirectory(parent=self._w, title="Select Project Directory")
+        if d:
+            current = self._text.get("1.0", "end").strip()
+            if current:
+                self._text.insert("end", f"\n{d}")
+            else:
+                self._text.insert("1.0", d)
 
     @staticmethod
     def _mkbtn(parent, text, cmd, bg, fg, hover,
@@ -146,9 +155,9 @@ class FolderPasteDialog:
         return self._result
 
 
-def ask_folders(parent: tk.Misc, title: str = "Add Project Folders", initial_dir: Optional[Path] = None) -> List[Path]:
+def ask_folders(parent: tk.Misc, title: str = "Select Project Folders", initial_dir: Optional[Path] = None) -> List[Path]:
     """
-    Open the Image Automation style folder-path pasting dialog.
+    Open the Project Folder Selector dialog (supports both GUI Folder Browser and Multi-Path Pasting).
     Returns list of Path objects.
     """
     dlg = FolderPasteDialog(parent, title=title)

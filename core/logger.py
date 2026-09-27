@@ -72,6 +72,23 @@ class AppLogger:
         with self._lock:
             self._callbacks = [c for c in self._callbacks if c is not cb]
 
+    def shutdown(self) -> None:
+        """Flushes file stream, closes file handle, and clears callbacks."""
+        with self._lock:
+            self._callbacks.clear()
+            if self._fh:
+                try:
+                    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                    self._fh.write(f"[{ts}] INFO   Session closed gracefully\n{'='*60}\n")
+                    self._fh.flush()
+                    self._fh.close()
+                except Exception:
+                    pass
+                finally:
+                    self._fh = None
+
+    close = shutdown  # alias
+
     def all_entries(self) -> List[Tuple[str, str, str]]:
         with self._lock:
             return list(self._entries)

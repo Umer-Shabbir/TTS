@@ -29,8 +29,11 @@ WARNING = "#f0a030"
 # (name for display, import probe, pip install args)
 DEPS = [
     ("kokoro-onnx",    "kokoro_onnx", ["kokoro-onnx"]),
+    ("piper-tts",      "piper",       ["piper-tts"]),
+    ("edge-tts",       "edge_tts",    ["edge-tts"]),
     ("onnxruntime",    "onnxruntime", ["onnxruntime"]),
     ("soundfile",      "soundfile",   ["soundfile"]),
+    ("scipy",          "scipy",       ["scipy"]),
     ("numpy",          "numpy",       ["numpy"]),
     ("espeakng-loader","espeakng_loader", ["espeakng-loader"]),
     ("phonemizer-fork","phonemizer",  ["phonemizer-fork"]),
@@ -41,7 +44,7 @@ PHASES = [
     {
         "key":    "packages",
         "title":  "Python Packages",
-        "detail": "kokoro-onnx · onnxruntime · soundfile · numpy · phonemizer",
+        "detail": "kokoro-onnx · piper-tts · edge-tts · onnxruntime · soundfile · phonemizer",
     },
     {
         "key":    "model",

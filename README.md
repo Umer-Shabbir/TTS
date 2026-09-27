@@ -8,14 +8,15 @@
 ## What It Does
 
 LocalTTS converts any text into broadcast-quality speech audio (24 kHz mono WAV).  
-It integrates with the pipeline's [Project Folder Contract](../PROJECT_FOLDER_CONTRACT.md):
+It integrates with the pipeline's [PROJECT_FOLDER_CONTRACT.md](../PROJECT_FOLDER_CONTRACT.md):
 
 - **Input:** `script.txt` → reads from project folders
 - **Output:** `audio.wav` → writes directly into the project folder
 - **Voice matching:** reads `metadata.json → preset_name` and auto-selects the best voice
+- **Multi-lingual support:** supports English, Portuguese, Korean, Chinese, Hindi, and Urdu across 3 integrated TTS backends (Kokoro, Piper, and Edge-TTS)
 
-Runs entirely **offline** after the first-time model download (~316 MB).  
-No API keys, no cloud, no usage limits.
+Runs offline or online seamlessly depending on backend.  
+No paid API keys or restrictive usage limits.
 
 ---
 
@@ -40,8 +41,9 @@ python main.py
 
 | Feature | Details |
 |---|---|
-| **TTS engine** | Kokoro-82M via `kokoro-onnx` (ONNX Runtime, CPU-only) |
-| **Voices** | 18 voices — 7 American Female, 5 American Male, 3 British Female, 3 British Male |
+| **TTS engines** | Multi-Backend: Kokoro-82M (English), Piper TTS (Offline Multilingual), Edge-TTS (Online Multilingual) |
+| **Languages** | English, Portuguese, Korean, Chinese (Mandarin), Hindi, Urdu |
+| **Voices** | 30+ curated voices across all supported languages |
 | **Sample rate** | 24 000 Hz mono WAV |
 | **Long text** | Auto-chunked at sentence boundaries, merged seamlessly |
 | **Queue** | Multi-job worker thread with pause / resume / retry |

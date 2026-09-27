@@ -470,13 +470,19 @@ class VoiceCard(tk.Frame):
                  font=("Segoe UI", 10, "bold"),
                  wraplength=155, justify="left").pack(side="left", padx=(8, 0))
 
-        lang_nice = "American English" if info.get("lang","") == "en-us" else \
-                    "British English"  if info.get("lang","") == "en-gb" else \
-                    info.get("lang","")
+        lang_map = {
+            "en-us": "American English", "en-gb": "British English",
+            "pt-br": "Portuguese (Brazil)", "pt-pt": "Portuguese (Portugal)",
+            "ko-kr": "Korean", "zh-cn": "Chinese",
+            "hi-in": "Hindi", "ur-pk": "Urdu"
+        }
+        lang_nice = lang_map.get(info.get("lang","").lower(), info.get("lang",""))
+        backend = info.get("backend", "kokoro").capitalize()
+
         tk.Label(self, text=f"ID: {info.get('id', info.get('speaker',''))}",
                  bg=cbg, fg=acc, font=("Segoe UI", 9, "bold"),
                  anchor="w").pack(fill="x", pady=(8, 0))
-        tk.Label(self, text=f"{lang_nice}  ·  Kokoro-82M  ·  24 kHz",
+        tk.Label(self, text=f"{lang_nice}  ·  {backend}",
                  bg=cbg, fg=TEXT2, font=("Segoe UI", 9),
                  anchor="w").pack(fill="x")
         tk.Label(self, text=info.get("desc", ""),
@@ -649,13 +655,19 @@ class SynthesizePage(tk.Frame):
              bg=BORDER2, fg=TEXT, hover=BORDER,
              font=("Segoe UI", 9), padx=8, pady=4).grid(row=0, column=1, padx=(4, 0))
 
-        _sep(right).grid(row=8, column=0, sticky="ew", pady=10)
+        # Direct Project Folders button
+        _btn(right, "📁  Add Project Folders…", self._load_project_folders_dialog,
+             bg=ACCENT_BG, fg=ACCENT_L, hover=CARD_HVR,
+             font=("Segoe UI", 10, "bold"), padx=12, pady=7).grid(
+                 row=8, column=0, sticky="ew", pady=(8, 4))
+
+        _sep(right).grid(row=9, column=0, sticky="ew", pady=6)
 
         # Action buttons
         self._btn_add = _btn(right, "➕  Add to Queue", self._add_single,
                               bg=ACCENT, fg="white", hover=ACCENT_L,
                               font=("Segoe UI", 11, "bold"), padx=16, pady=12)
-        self._btn_add.grid(row=9, column=0, sticky="ew")
+        self._btn_add.grid(row=10, column=0, sticky="ew")
         Tooltip(self._btn_add, "Add current text/files to queue  [Ctrl+Enter]")
 
         self._btn_queue_all = _btn(right, "📋  Queue All Files",
@@ -668,7 +680,7 @@ class SynthesizePage(tk.Frame):
         _btn(right, "🗑  Clear", self._clear_all,
              bg=CARD, fg=TEXT2, hover=CARD_HVR,
              font=("Segoe UI", 9), padx=10, pady=5).grid(
-                 row=11, column=0, sticky="ew", pady=(6, 0))
+                 row=12, column=0, sticky="ew", pady=(6, 0))
 
         # Keyboard bindings
         self.bind_all("<Control-Return>", lambda e: self._add_single())
@@ -696,8 +708,11 @@ class SynthesizePage(tk.Frame):
         self._txt.bind("<FocusOut>",  self._ph_out)
         self._txt.bind("<KeyRelease>", self._update_count)
 
-        # File load button at bottom of text panel
+        # File load buttons at bottom of text panel
         tbf = tk.Frame(p, bg=BG); tbf.grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        _btn(tbf, "📁  Add Project Folder(s)…", self._load_project_folders_dialog,
+             bg=ACCENT_BG, fg=ACCENT_L, hover=CARD_HVR,
+             font=("Segoe UI", 9, "bold"), padx=10, pady=5).pack(side="right", padx=(6, 0))
         _btn(tbf, "📂  Load File(s)…", self._load_files_dialog,
              bg=CARD, fg=TEXT2, hover=CARD_HVR,
              font=("Segoe UI", 9), padx=10, pady=5).pack(side="right")
@@ -881,18 +896,16 @@ class SynthesizePage(tk.Frame):
             meta_path = folder / "metadata.json"
             if meta_path.exists():
                 try:
+                    import json
                     meta = json.loads(read_text_file(str(meta_path)))
-                    preset_name = meta.get("preset_name", "")
+                    # TTS explicitly reads ONLY 'voice_name' from metadata per contract.
+                    # It DOES NOT interpret 'preset_name'.
+                    voice_name = meta.get("voice_name", "").strip()
 
-                    # Match preset name against voice catalogue
-                    if preset_name:
-                        voices = list(VOICE_CATALOGUE.keys())
-                        for v in voices:
-                            if preset_name.lower() in v.lower():
-                                voice = v
-                                break
-                except Exception:
-                    pass
+                    if voice_name and voice_name in VOICE_CATALOGUE:
+                        voice = voice_name
+                except Exception as e:
+                    log.error(f"Failed to read metadata.json for voice selection: {e}")
 
             # ── Output goes into the project folder per contract ──────────
             out  = str(folder / "audio.wav")
@@ -1012,9 +1025,15 @@ class SynthesizePage(tk.Frame):
         info = VOICE_CATALOGUE.get(v, {})
         g    = info.get("gender", "").capitalize()
         vid  = info.get("id", "")
-        lang_map = {"en-us": "American English", "en-gb": "British English"}
-        lang = lang_map.get(info.get("lang", ""), info.get("lang", ""))
-        self._vinfo_v.set(f"{vid}  ·  {g}  ·  {lang}  ·  24 kHz")
+        backend = info.get("backend", "kokoro").capitalize()
+        lang_map = {
+            "en-us": "American English", "en-gb": "British English",
+            "pt-br": "Portuguese (Brazil)", "pt-pt": "Portuguese (Portugal)",
+            "ko-kr": "Korean", "zh-cn": "Chinese (Mandarin)",
+            "hi-in": "Hindi", "ur-pk": "Urdu"
+        }
+        lang = lang_map.get(info.get("lang", "").lower(), info.get("lang", ""))
+        self._vinfo_v.set(f"{backend}  ·  {vid}  ·  {g}  ·  {lang}")
 
     def _on_voice_changed(self, _):
         self._refresh_vinfo()
@@ -1285,7 +1304,7 @@ class VoicesPage(tk.Frame):
         hdr.pack(fill="x", padx=24, pady=(18, 8))
         tk.Label(hdr, text="Voices", bg=BG, fg=TEXT,
                  font=("Segoe UI", 18, "bold")).pack(side="left")
-        tk.Label(hdr, text=f"  ·  {len(VOICE_CATALOGUE)} voices  ·  Kokoro-82M  ·  Apache 2.0",
+        tk.Label(hdr, text=f"  ·  {len(VOICE_CATALOGUE)} voices  ·  Multi-Backend (Kokoro, Piper, Edge-TTS)",
                  bg=BG, fg=TEXT2, font=("Segoe UI", 10)).pack(side="left", pady=(6, 0))
         _sep(self).pack(fill="x", padx=24)
 
@@ -1293,21 +1312,43 @@ class VoicesPage(tk.Frame):
         ctrl = tk.Frame(self, bg=BG)
         ctrl.pack(fill="x", padx=24, pady=(10, 6))
 
+        # Language filter
+        self._filter_lang = "all"
+        lang_filter_f = tk.Frame(ctrl, bg=BG)
+        lang_filter_f.pack(side="left", padx=(0, 16))
+        tk.Label(lang_filter_f, text="Language:", bg=BG, fg=TEXT2, font=("Segoe UI", 9)).pack(side="left", padx=(0,6))
+
+        self._lang_vars: dict[str, tk.Button] = {}
+        for key, lbl in [("all", "All"), ("en", "English"), ("pt", "Portuguese"), ("ko", "Korean"), ("zh", "Chinese"), ("hi", "Hindi"), ("ur", "Urdu")]:
+            is_a = key == "all"
+            b = tk.Button(lang_filter_f, text=lbl,
+                          bg=ACCENT if is_a else CARD,
+                          fg="white" if is_a else TEXT2,
+                          relief="flat", font=("Segoe UI", 9),
+                          padx=8, pady=4, cursor="hand2",
+                          command=lambda k=key: self._set_lang_filter(k))
+            b.pack(side="left", padx=(0, 2))
+            self._lang_vars[key] = b
+
         # Gender filter
+        self._filt_btns: dict[str, tk.Button] = {}
+        gender_filter_f = tk.Frame(ctrl, bg=BG)
+        gender_filter_f.pack(side="left")
         for key, lbl, acc in [
-            ("all",     "All",     ACCENT),
+            ("all",     "All Genders", ACCENT),
             ("female",  "♀ Female",  FEMALE_ACC),
             ("male",    "♂ Male",    MALE_ACC),
             ("neutral", "◎ Neutral", NEUTRAL_ACC),
         ]:
             is_a = key == "all"
-            b = tk.Button(ctrl, text=lbl,
+            b = tk.Button(gender_filter_f, text=lbl,
                           bg=acc if is_a else CARD,
                           fg="white" if is_a else TEXT2,
                           relief="flat", font=("Segoe UI", 9),
-                          padx=10, pady=4, cursor="hand2",
+                          padx=8, pady=4, cursor="hand2",
                           command=lambda k=key: self._set_gender_filter(k))
-            b.pack(side="left", padx=(0, 4))
+            b.pack(side="left", padx=(0, 2))
+            self._filt_btns[key] = b
 
         # Search
         tk.Label(ctrl, text="Search:", bg=BG, fg=TEXT2,
@@ -1326,6 +1367,15 @@ class VoicesPage(tk.Frame):
 
     def _set_gender_filter(self, key: str):
         self._filter_g = key
+        for k, b in self._filt_btns.items():
+            acc = ACCENT if k == "all" else (FEMALE_ACC if k == "female" else (MALE_ACC if k == "male" else NEUTRAL_ACC))
+            b.configure(bg=acc if k == key else CARD, fg="white" if k == key else TEXT2)
+        self._refresh_grid()
+
+    def _set_lang_filter(self, key: str):
+        self._filter_lang = key
+        for k, b in self._lang_vars.items():
+            b.configure(bg=ACCENT if k == key else CARD, fg="white" if k == key else TEXT2)
         self._refresh_grid()
 
     def _refresh_grid(self):
@@ -1334,15 +1384,30 @@ class VoicesPage(tk.Frame):
 
         search   = self._search_v.get().lower()
         selected = self._cfg.get("voice", "")
-        voices   = [
-            (n, i) for n, i in VOICE_CATALOGUE.items()
-            if (self._filter_g == "all" or i.get("gender") == self._filter_g)
-            and (not search or search in n.lower() or
-                 search in i.get("desc", "").lower() or
-                 search in i.get("speaker", "").lower())
-        ]
 
-        if not voices:
+        # Filter logic
+        filtered_voices = []
+        for n, i in VOICE_CATALOGUE.items():
+            # Apply Gender Filter
+            if self._filter_g != "all" and i.get("gender") != self._filter_g:
+                continue
+
+            # Apply Lang Filter
+            if self._filter_lang != "all" and not i.get("lang", "").startswith(self._filter_lang):
+                continue
+
+            # Apply Search Filter (Search matches Name, Description, Backend)
+            if search and not (
+                search in n.lower() or
+                search in i.get("desc", "").lower() or
+                search in i.get("id", "").lower() or
+                search in i.get("backend", "").lower()
+            ):
+                continue
+
+            filtered_voices.append((n, i))
+
+        if not filtered_voices:
             tk.Label(self._scroll.inner,
                      text="No voices match the current filter.",
                      bg=BG, fg=TEXT3, font=("Segoe UI", 11)).pack(pady=60)
@@ -1351,7 +1416,7 @@ class VoicesPage(tk.Frame):
         self._scroll.inner.columnconfigure(0, weight=1, uniform="vc")
         self._scroll.inner.columnconfigure(1, weight=1, uniform="vc")
 
-        for i, (name, info) in enumerate(voices):
+        for i, (name, info) in enumerate(filtered_voices):
             r, c = divmod(i, 2)
             card = VoiceCard(self._scroll.inner, name, info,
                               selected=(name == selected),
@@ -1586,6 +1651,10 @@ class SettingsPage(tk.Frame):
              "Completed jobs are removed from the Queue page automatically."),
             ("show_notifications", "Show toast notifications on job completion",
              "Brief popups appear when a job finishes."),
+            ("enhance_audio",      "Audio Post-Processing & Mastering (Studio Quality)",
+             "Applies subtle high-pass filtering (cuts sub-80Hz rumble) and dynamic peak normalization."),
+            ("smart_pacing",       "Smart Pacing & Natural Breathing",
+             "Automatically injects natural pauses around punctuation and clauses for fluid human cadence."),
         ]:
             bv = tk.BooleanVar(value=bool(self._cfg.get(key, True)))
             self._bool_vars[key] = bv
@@ -1636,6 +1705,31 @@ class SettingsPage(tk.Frame):
         tk.Label(f, text=cache_info, bg=CARD, fg=TEXT3,
                  font=("Segoe UI", 9), padx=10, pady=6,
                  anchor="w").grid(row=0, column=1, sticky="ew", padx=(8, 8))
+
+        # ── System Vitals ──────────────────────────────────────────────
+        section("🩺  SYSTEM VITALS")
+        vitals_f = tk.Frame(p, bg=CARD, highlightthickness=1, highlightbackground=BORDER)
+        vitals_f.pack(fill="x", padx=24, pady=(0, 8))
+
+        # We perform a quick live check of required packages
+        import importlib.util
+        from ui.dep_check import DEPS
+
+        row_idx = 0
+        for name, imp, _ in DEPS:
+            ok = importlib.util.find_spec(imp) is not None
+            color = SUCCESS if ok else ERROR
+            icon = "✓" if ok else "✗"
+            status_text = "Installed / OK" if ok else "Missing"
+
+            item_f = tk.Frame(vitals_f, bg=CARD)
+            item_f.pack(fill="x", padx=16, pady=4)
+            tk.Label(item_f, text=f"{icon}  {name}", bg=CARD, fg=TEXT,
+                     font=("Segoe UI", 10, "bold"), width=18, anchor="w").pack(side="left")
+            tk.Label(item_f, text=status_text, bg=CARD, fg=color,
+                     font=("Segoe UI", 9)).pack(side="left")
+
+            row_idx += 1
 
         # ── About ─────────────────────────────────────────────────────
         section("ℹ  ABOUT")
@@ -2077,5 +2171,7 @@ class App:
                 "There are jobs still in the queue.\nQuit anyway and discard them?"):
                 return
         self._qm.shutdown()
+        log.info("Application exiting.")
+        log.shutdown()
         self._root.quit()
         self._root.destroy()

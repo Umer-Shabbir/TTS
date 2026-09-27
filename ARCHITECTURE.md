@@ -50,12 +50,11 @@ Downloads the two Kokoro model files on first run using `urllib.request` with
 a 64 KB streaming buffer and `.tmp` rename-on-success safety.
 
 ### `core/tts_backend.py`
-`TTSEngine` — holds a single lazily-loaded `Kokoro` ONNX session.
+`TTSEngine` — holds lazily-loaded engine instances (Kokoro ONNX, Piper ONNX, and Edge-TTS).
 
 - `chunk_text()`: sentence-aligned chunking at ≤ N characters
 - `concat_wavs()`: stdlib `wave` merge with no extra dependencies
-- `synthesize()`: loads the model on first call; auto-chunks long text;
-  writes temp WAVs per chunk, merges, cleans up regardless of exceptions
+- `synthesize()`: dynamically dispatches synthesis to Kokoro, Piper (offline ONNX), or Edge-TTS (online streaming API) based on voice configuration. Auto-chunks long text; writes temp WAVs per chunk, merges, cleans up regardless of exceptions.
 
 The engine is **owned by the worker thread** — it is not thread-safe and is
 never touched from the UI thread.

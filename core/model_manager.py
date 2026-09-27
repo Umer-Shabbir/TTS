@@ -1,11 +1,12 @@
 """
 core/model_manager.py
 ─────────────────────
-Downloads and caches Kokoro-82M ONNX model files.
+Downloads and caches Kokoro-82M ONNX model files and Piper models.
 
 Files stored in: ~/.config/localtts/models/
   kokoro-v1.0.onnx   ~310 MB  (the neural network)
   voices-v1.0.bin    ~  6 MB  (voice embeddings for all speakers)
+  piper/<voice_id>/  Piper ONNX voice and config files (~20-60 MB each)
 
 Both files are downloaded once; subsequent runs use the local cache.
 """
@@ -75,7 +76,7 @@ def ensure_models_downloaded(
     progress_cb: Optional[Callable[[str], None]] = None
 ) -> tuple[bool, str]:
     """
-    Download model files if not already cached.
+    Download Kokoro model files if not already cached.
     Returns (success: bool, error_message: str).
     """
     if models_cached():
@@ -111,3 +112,44 @@ def ensure_models_downloaded(
     log.step("All Kokoro model files downloaded and cached.")
     if progress_cb: progress_cb("Model files ready.")
     return True, ""
+
+
+def ensure_piper_voice_downloaded(
+    voice_cfg: dict,
+    progress_cb: Optional[Callable[[str], None]] = None
+) -> tuple[bool, Path, Path]:
+    """
+    Ensure the given Piper voice model (.onnx and .onnx.json) is cached.
+    Returns (success: bool, model_path: Path, config_path: Path).
+    """
+    voice_id = voice_cfg.get("id")
+    url_onnx = voice_cfg.get("url_onnx")
+    url_json = voice_cfg.get("url_json")
+
+    if not voice_id or not url_onnx or not url_json:
+        return False, Path(""), Path("")
+
+    piper_dir = MODEL_DIR / "piper" / voice_id
+    piper_dir.mkdir(parents=True, exist_ok=True)
+
+    dest_onnx = piper_dir / f"{voice_id}.onnx"
+    dest_json = piper_dir / f"{voice_id}.onnx.json"
+
+    # Check if already present and non-empty
+    if dest_onnx.exists() and dest_json.exists() and dest_onnx.stat().st_size > 10_000:
+        return True, dest_onnx, dest_json
+
+    log.step(f"Downloading Piper voice {voice_id}…")
+    if progress_cb:
+        progress_cb(f"Downloading {voice_id} config…")
+    ok_json = _download_file(url_json, dest_json, f"{voice_id}.onnx.json", progress_cb)
+    if not ok_json:
+        return False, dest_onnx, dest_json
+
+    if progress_cb:
+        progress_cb(f"Downloading {voice_id} model…")
+    ok_onnx = _download_file(url_onnx, dest_onnx, f"{voice_id}.onnx", progress_cb)
+    if not ok_onnx:
+        return False, dest_onnx, dest_json
+
+    return True, dest_onnx, dest_json
