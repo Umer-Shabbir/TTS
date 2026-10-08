@@ -225,7 +225,7 @@ class StartupDialog:
                 p.wait(); code = p.returncode
             except Exception as e:
                 code = -1
-                self._w.after(0, lambda: self._log_w(f"Error: {e}\n", ERROR))
+                self._w.after(0, lambda err=e: self._log_w(f"Error: {err}\n", ERROR))
             self._w.after(0, lambda c=code: self._pkg_done(c))
 
         threading.Thread(target=_run, daemon=True).start()
@@ -268,7 +268,7 @@ class StartupDialog:
                 from core.model_manager import models_cached
                 cached = models_cached()
             except Exception as e:
-                self._w.after(0, lambda: self._log_w(f"  Error: {e}\n", WARNING))
+                self._w.after(0, lambda err=e: self._log_w(f"  Error: {err}\n", WARNING))
                 cached = False
             self._w.after(0, lambda: self._phase2_result(cached))
 
@@ -299,7 +299,7 @@ class StartupDialog:
                         0, lambda msg=m: self._log_w(f"  {msg}\n")))
             except Exception as e:
                 ok, err = False, str(e)
-                self._w.after(0, lambda: self._log_w(f"  Error: {e}\n", ERROR))
+                self._w.after(0, lambda err=e: self._log_w(f"  Error: {err}\n", ERROR))
             self._w.after(0, lambda: self._model_done(ok, err))
 
         threading.Thread(target=_dl, daemon=True).start()

@@ -10,7 +10,6 @@ Files stored in: ~/.config/localtts/models/
 
 Both files are downloaded once; subsequent runs use the local cache.
 """
-import os
 import urllib.request
 from pathlib import Path
 from typing import Callable, Optional

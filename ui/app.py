@@ -5,11 +5,11 @@ Pages:    Synthesize | Queue | Voices | History | Settings
 Features: multi-file, pause/resume, retry, play audio, voice search,
           toast notifications, keyboard shortcuts, auto-open, timing, etc.
 """
-import os, subprocess, sys, time, tkinter as tk
+import os, subprocess, sys, tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import ttk, filedialog, messagebox
-from typing import Callable, Optional
+from typing import Callable
 
 import config.settings as CFG
 from config.settings import VOICE_CATALOGUE, APP_VERSION
@@ -596,7 +596,6 @@ class SynthesizePage(tk.Frame):
         row_n = 0
 
         def sect(t, r):
-            nonlocal row_n
             tk.Label(right, text=t, bg=BG, fg=TEXT2,
                      font=("Segoe UI", 8, "bold")).grid(
                          row=r, column=0, sticky="w", pady=(10, 3))
@@ -644,7 +643,7 @@ class SynthesizePage(tk.Frame):
         # Output folder
         sect("📁  OUTPUT FOLDER", 6)
         of_row = tk.Frame(right, bg=BG)
-        of_row.grid(row=7, column=0, sticky="ew")
+        of_row.grid(row=8, column=0, sticky="ew")
         of_row.columnconfigure(0, weight=1)
         self._outdir_v = tk.StringVar(value=self._cfg.get("output_dir", ""))
         tk.Label(of_row, textvariable=self._outdir_v,
@@ -655,19 +654,26 @@ class SynthesizePage(tk.Frame):
              bg=BORDER2, fg=TEXT, hover=BORDER,
              font=("Segoe UI", 9), padx=8, pady=4).grid(row=0, column=1, padx=(4, 0))
 
+        
+        # Scan Master Folder button
+        _btn(right, "🔍  Scan Master Folder…", self._scan_master_folder_dialog,
+             bg=ACCENT, fg="white", hover=CARD_HVR,
+             font=("Segoe UI", 10, "bold"), padx=12, pady=7).grid(
+                 row=7, column=0, sticky="ew", pady=(8, 4))
+
         # Direct Project Folders button
-        _btn(right, "📁  Add Project Folders…", self._load_project_folders_dialog,
+        _btn(right, "📁  Scan Master Folder...", self._load_project_folders_dialog,
              bg=ACCENT_BG, fg=ACCENT_L, hover=CARD_HVR,
              font=("Segoe UI", 10, "bold"), padx=12, pady=7).grid(
-                 row=8, column=0, sticky="ew", pady=(8, 4))
+                 row=9, column=0, sticky="ew", pady=(8, 4))
 
-        _sep(right).grid(row=9, column=0, sticky="ew", pady=6)
+        _sep(right).grid(row=10, column=0, sticky="ew", pady=6)
 
         # Action buttons
         self._btn_add = _btn(right, "➕  Add to Queue", self._add_single,
                               bg=ACCENT, fg="white", hover=ACCENT_L,
                               font=("Segoe UI", 11, "bold"), padx=16, pady=12)
-        self._btn_add.grid(row=10, column=0, sticky="ew")
+        self._btn_add.grid(row=11, column=0, sticky="ew")
         Tooltip(self._btn_add, "Add current text/files to queue  [Ctrl+Enter]")
 
         self._btn_queue_all = _btn(right, "📋  Queue All Files",
@@ -680,7 +686,7 @@ class SynthesizePage(tk.Frame):
         _btn(right, "🗑  Clear", self._clear_all,
              bg=CARD, fg=TEXT2, hover=CARD_HVR,
              font=("Segoe UI", 9), padx=10, pady=5).grid(
-                 row=12, column=0, sticky="ew", pady=(6, 0))
+                 row=13, column=0, sticky="ew", pady=(6, 0))
 
         # Keyboard bindings
         self.bind_all("<Control-Return>", lambda e: self._add_single())
@@ -710,7 +716,7 @@ class SynthesizePage(tk.Frame):
 
         # File load buttons at bottom of text panel
         tbf = tk.Frame(p, bg=BG); tbf.grid(row=1, column=0, sticky="ew", pady=(6, 0))
-        _btn(tbf, "📁  Add Project Folder(s)…", self._load_project_folders_dialog,
+        _btn(tbf, "📁  Scan Master Folder...", self._load_project_folders_dialog,
              bg=ACCENT_BG, fg=ACCENT_L, hover=CARD_HVR,
              font=("Segoe UI", 9, "bold"), padx=10, pady=5).pack(side="right", padx=(6, 0))
         _btn(tbf, "📂  Load File(s)…", self._load_files_dialog,
@@ -726,7 +732,7 @@ class SynthesizePage(tk.Frame):
         _btn(ctrl, "📂  Add Files…", self._load_files_dialog,
              bg=ACCENT, fg="white", hover=ACCENT_L,
              font=("Segoe UI", 9, "bold"), padx=10, pady=5).pack(side="left")
-        _btn(ctrl, "📁  Add Project Folders…", self._load_project_folders_dialog,
+        _btn(ctrl, "📁  Scan Master Folder...", self._load_project_folders_dialog,
              bg=ACCENT_BG, fg=ACCENT_L, hover=CARD_HVR,
              font=("Segoe UI", 9, "bold"), padx=10, pady=5).pack(side="left", padx=(6, 0))
         _btn(ctrl, "✕  Clear All", self._clear_file_list,
@@ -809,7 +815,7 @@ class SynthesizePage(tk.Frame):
         else:
             self._text_panel.grid_forget()
             self._files_panel.grid(row=1, column=0, sticky="nsew")
-            self._btn_queue_all.grid(row=10, column=0, sticky="ew", pady=(6, 0))
+            self._btn_queue_all.grid(row=11, column=0, sticky="ew", pady=(6, 0))
 
     # ── Placeholder helpers ────────────────────────────────────────────────────
 
@@ -861,6 +867,70 @@ class SynthesizePage(tk.Frame):
             self._switch_tab("files")
             self._status(f"Loaded {len(results)} files into queue list")
 
+
+    def _scan_master_folder_dialog(self):
+        from core.file_handler import scan_master_folder
+        master_dir = filedialog.askdirectory(title="Select Master Folder containing Project Folders")
+        if not master_dir:
+            return
+            
+        folders = scan_master_folder(master_dir)
+        count = 0
+        skipped = 0
+        for folder in folders:
+            script_path = folder / "script.txt"
+            if not script_path.exists():
+                log.warn(f"Skipped {folder.name} — no script.txt found")
+                self._status(f"Skipped: {folder.name} (missing script.txt)")
+                skipped += 1
+                continue
+
+            text = read_text_file(str(script_path))
+            if not text:
+                skipped += 1
+                continue
+
+            voice = self._voice_v.get()
+            speed = round(float(self._speed_v.get()), 1)
+
+            meta_path = folder / "project.json"
+            if meta_path.exists():
+                try:
+                    import json
+                    with open(meta_path, 'r', encoding='utf-8') as f:
+                        meta = json.load(f)
+                    
+                    voice_name = meta.get("voice_name", "").strip()
+                    if voice_name and voice_name in VOICE_CATALOGUE:
+                        voice = voice_name
+                except Exception as e:
+                    log.error(f"Failed to read project.json for voice selection: {e}")
+
+            out  = str(folder / "audio.wav")
+            stem = folder.name
+
+            job = TTSJob(
+                text=text,
+                voice=voice,
+                output_path=out,
+                speed=speed,
+                chunk_limit=self._cfg.get("chunk_limit", CFG.CHUNK_CHAR_LIMIT),
+                source_name=stem,
+                project_folder=str(folder)
+            )
+            self._qm.enqueue(job)
+            count += 1
+            log.info(f"Project folder queued from scan: {folder.name} voice='{voice}'")
+
+        if count > 0:
+            msg = f"✓  {count} project folder(s) added to queue from master"
+            if skipped:
+                msg += f"  ({skipped} skipped)"
+            self._status(msg)
+            self._navigate("queue")
+        else:
+            self._status("No valid project folders found in master folder.")
+
     def _load_project_folders_dialog(self):
         """Open the universal multi-folder selector and queue every valid project folder."""
         initial = Path(self._cfg.get("output_dir", str(Path.home())))
@@ -873,10 +943,28 @@ class SynthesizePage(tk.Frame):
             return
 
         import json
-
+        self._scan_and_queue_folders(folders)
+        
+    def _scan_and_queue_folders(self, paths: list[Path]):
         count   = 0
         skipped = 0
-        for folder in folders:
+        
+        # Expand master folders: if a folder contains project.json or metadata.json directly, it's a project.
+        # Otherwise, treat it as a master folder and scan its immediate subdirectories.
+        expanded_folders = []
+        for p in paths:
+            if (p / "project.json").exists() or (p / "metadata.json").exists() or (p / "script.txt").exists():
+                if p not in expanded_folders:
+                    expanded_folders.append(p)
+            else:
+                # Master directory case: scan subdirs
+                log.info(f"Scanning master folder: {p}")
+                for sub in p.iterdir():
+                    if sub.is_dir() and ((sub / "project.json").exists() or (sub / "metadata.json").exists() or (sub / "script.txt").exists()):
+                        if sub not in expanded_folders:
+                            expanded_folders.append(sub)
+
+        for folder in expanded_folders:
             script_path = folder / "script.txt"
             if not script_path.exists():
                 log.warn(f"Skipped {folder.name} — no script.txt found")
@@ -893,11 +981,34 @@ class SynthesizePage(tk.Frame):
             voice = self._voice_v.get()
             speed = round(float(self._speed_v.get()), 1)
 
-            meta_path = folder / "metadata.json"
+            meta_path = folder / "project.json"
+            if not meta_path.exists():
+                meta_path = folder / "metadata.json" # Fallback to old name
+
             if meta_path.exists():
                 try:
-                    import json
-                    meta = json.loads(read_text_file(str(meta_path)))
+                    with open(meta_path, 'r', encoding='utf-8') as f:
+                        meta = json.load(f)
+                        
+                    # Contract check: Only queue if audio is missing and script is ready
+                    has_audio = (folder / "audio.wav").exists()
+                    
+                    if has_audio:
+                        log.warn(f"Skipped {folder.name} — audio.wav already exists")
+                        self._status(f"Skipped: {folder.name} (audio.wav exists)")
+                        skipped += 1
+                        continue
+                        
+                    # If project.json states we aren't waiting for a script to be voiced, we can skip too
+                    stage = meta.get('stage')
+                    status = meta.get('status')
+                    
+                    if stage and stage != 'INITIAL':
+                        log.warn(f"Skipped {folder.name} — not in INITIAL state (is {stage})")
+                        self._status(f"Skipped: {folder.name} (wrong stage: {stage})")
+                        skipped += 1
+                        continue
+
                     # TTS explicitly reads ONLY 'voice_name' from metadata per contract.
                     # It DOES NOT interpret 'preset_name'.
                     voice_name = meta.get("voice_name", "").strip()
@@ -905,16 +1016,30 @@ class SynthesizePage(tk.Frame):
                     if voice_name and voice_name in VOICE_CATALOGUE:
                         voice = voice_name
                 except Exception as e:
-                    log.error(f"Failed to read metadata.json for voice selection: {e}")
+                    log.error(f"Failed to read {meta_path.name} for voice selection: {e}")
+
+            else:
+                # If no project.json, skip checking stage constraints but still check for audio
+                has_audio = (folder / "audio.wav").exists()
+                if has_audio:
+                    log.warn(f"Skipped {folder.name} — audio.wav already exists")
+                    self._status(f"Skipped: {folder.name} (audio.wav exists)")
+                    skipped += 1
+                    continue
 
             # ── Output goes into the project folder per contract ──────────
             out  = str(folder / "audio.wav")
             stem = folder.name
 
-            job = TTSJob(text=text, voice=voice, output_path=out,
-                         speed=speed,
-                         chunk_limit=self._cfg.get("chunk_limit", CFG.CHUNK_CHAR_LIMIT),
-                         source_name=stem)
+            job = TTSJob(
+                text=text,
+                voice=voice,
+                output_path=out,
+                speed=speed,
+                chunk_limit=self._cfg.get("chunk_limit", CFG.CHUNK_CHAR_LIMIT),
+                source_name=stem,
+                project_folder=str(folder) # pass folder to job
+            )
             self._qm.enqueue(job)
             count += 1
             log.info(f"Project folder queued: {folder.name}  voice='{voice}'")
@@ -2104,6 +2229,21 @@ class App:
         job = self._qm._jobs.get(jid)
         if job:
             self._hpage.add_entry(job)
+
+            # Update project.json if this was a project folder job
+            if job.project_folder:
+                meta_path = Path(job.project_folder) / "project.json"
+                if meta_path.exists():
+                    try:
+                        import json
+                        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                        if meta.get("stage") == "INITIAL":
+                            meta["stage"] = "VOICED"
+                            meta["status"] = "COMPLETED"
+                            meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+                            log.info(f"Updated project status to VOICED for {Path(job.project_folder).name}")
+                    except Exception as e:
+                        log.error(f"Failed to update project.json for {Path(job.project_folder).name}: {e}")
 
         if self._cfg.get("show_notifications", True):
             Toast(self._root, f"✓  {jid}  complete\n{fname}",

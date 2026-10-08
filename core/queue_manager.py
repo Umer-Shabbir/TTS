@@ -16,6 +16,7 @@ class TTSJob:
     speed:       float = 1.0
     chunk_limit: int   = 250
     source_name: str   = "text_input"
+    project_folder: Optional[str] = None
 
     job_id:      str      = field(default_factory=lambda: uuid.uuid4().hex[:8].upper())
     status:      str      = "queued"
@@ -141,7 +142,32 @@ class QueueManager:
                 job.status = "completed"; job.finished_at = datetime.now()
                 log.step(f"Job {jid} COMPLETED in {job.duration_str} "
                          f"→ {job.output_path}")
+
+                if job.project_folder:
+                    import json
+                    from pathlib import Path
+                    from core.tts_backend import generate_srt
+                    pjson = Path(job.project_folder) / "project.json"
+
+                    duration_val = 0.0
+                    if job.started_at and job.finished_at:
+                        duration_val = (job.finished_at - job.started_at).total_seconds()
+
+                    # Generate the SRT file in the same folder as the output audio
+                    generate_srt(job.text, duration_val, job.output_path)
+
+                    if pjson.exists():
+                        try:
+                            with open(pjson, "r", encoding="utf-8") as _f:
+                                pdata = json.load(_f)
+                            pdata["stage"] = "VOICED"
+                            pdata["status"] = "COMPLETED"
+                            with open(pjson, "w", encoding="utf-8") as _f:
+                                json.dump(pdata, _f, indent=2)
+                        except Exception as meta_exc:
+                            log.error(f"Failed to update project.json state for {jid}: {meta_exc}")
                 self._emit("completed", jid, job.output_path)
+
 
             except Exception as exc:
                 job.status = "failed"; job.error = str(exc)

@@ -19,6 +19,87 @@ from core.logger import log
 from core.model_manager import ensure_piper_voice_downloaded
 
 
+def generate_srt(text: str, duration: float, output_path: str) -> None:
+    """
+    Generate an SRT subtitle file from transcript text and audio duration.
+    Uses sentence-level or phrase-level splitting with proportional timing.
+    """
+    try:
+        import re
+        from pathlib import Path
+        srt_file = Path(output_path).parent / "transcript.srt"
+        if duration <= 0 or not text.strip():
+            return
+
+        # Clean up text
+        cleaned_text = text.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+        cleaned_text = re.sub(r"\s+", " ", cleaned_text).strip()
+
+        # Split into readable sentences or natural phrases (~4-10 words / 40-70 chars)
+        sentences = re.split(r'(?<=[.!?])\s+|\n\n', cleaned_text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+
+        chunks = []
+        for sent in sentences:
+            if len(sent) > 80:
+                # Sub-split long sentence by comma / clause boundaries
+                clauses = re.split(r'(?<=[,;:—])\s*', sent)
+                cur = ""
+                for cl in clauses:
+                    if not cl.strip():
+                        continue
+                    if len(cur) + len(cl) <= 80:
+                        cur = (cur + " " + cl).strip()
+                    else:
+                        if cur:
+                            chunks.append(cur)
+                        cur = cl.strip()
+                if cur:
+                    chunks.append(cur)
+            else:
+                chunks.append(sent)
+
+        if not chunks:
+            chunks = [cleaned_text]
+
+        # Calculate character-proportional timing for realistic pacing
+        total_chars = sum(len(c) for c in chunks)
+        if total_chars == 0:
+            total_chars = 1
+
+        def _fmt_time(s: float) -> str:
+            s = max(0.0, s)
+            ms = int(round((s % 1) * 1000))
+            if ms >= 1000:
+                ms = 999
+            si = int(s)
+            h = si // 3600
+            m = (si % 3600) // 60
+            sec = si % 60
+            return f"{h:02d}:{m:02d}:{sec:02d},{ms:03d}"
+
+        srt_lines = []
+        cur_t = 0.0
+        for idx, chunk in enumerate(chunks, 1):
+            weight = len(chunk) / float(total_chars)
+            chunk_duration = weight * duration
+            start_t = cur_t
+            end_t = min(duration, cur_t + chunk_duration)
+            cur_t = end_t
+
+            srt_lines.append(str(idx))
+            srt_lines.append(f"{_fmt_time(start_t)} --> {_fmt_time(end_t)}")
+            srt_lines.append(chunk)
+            srt_lines.append("")
+
+        srt_file.write_text("\n".join(srt_lines), encoding="utf-8")
+        from core.logger import log
+        log.info(f"Generated SRT file successfully: {srt_file}")
+    except Exception as e:
+        from core.logger import log
+        log.error(f"Failed to generate SRT file: {e}")
+
+
 def preprocess_text_pacing(text: str) -> str:
     """Enhance text punctuation and spacing for more natural cadence and breath pauses."""
     import re

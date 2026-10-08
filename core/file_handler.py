@@ -55,3 +55,41 @@ def build_output_path(output_dir: str, source_name: str = "tts",
         out_path = out / f"{filename}_{counter}.wav"
         counter += 1
     return str(out_path)
+
+import json
+
+def scan_master_folder(master_dir: str) -> List[Path]:
+    """
+    Search immediate subdirectories of master_dir for valid project folders.
+    Valid project folders must have a project.json with stage=INITIAL and status=PENDING
+    and a script.txt file.
+    """
+    try:
+        master_path = Path(master_dir)
+        if not master_path.exists() or not master_path.is_dir():
+            return []
+
+        valid_folders = []
+        for subdir in master_path.iterdir():
+            if not subdir.is_dir():
+                continue
+
+            project_json = subdir / "project.json"
+            if not project_json.exists():
+                project_json = subdir / "metadata.json"
+                
+            script_txt = subdir / "script.txt"
+
+            if not project_json.exists() or not script_txt.exists():
+                continue
+
+            try:
+                data = json.loads(read_text_file(str(project_json)))
+                if data.get("stage") == "INITIAL" and data.get("status") == "PENDING":
+                    valid_folders.append(subdir)
+            except Exception:
+                continue
+
+        return valid_folders
+    except Exception:
+        return []
