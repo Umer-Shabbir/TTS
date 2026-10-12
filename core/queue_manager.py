@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Callable, Dict, List, Optional
 from core.tts_backend import TTSEngine
 from core.logger import log
+from config.settings import resolve_voice
 
 
 @dataclass
@@ -61,6 +62,7 @@ class QueueManager:
     def on(self, event: str, cb: Callable): self._handlers[event].append(cb)
 
     def enqueue(self, job: TTSJob):
+        job.voice = resolve_voice(job.voice)
         self._jobs[job.job_id] = job
         self._q.put(job.job_id)
         log.info(f"Job {job.job_id} queued — voice='{job.voice}' "

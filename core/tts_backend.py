@@ -13,7 +13,7 @@ import numpy as np
 import soundfile as sf
 
 from config.settings import (
-    VOICE_CATALOGUE, MODEL_FILE, VOICES_FILE, SAMPLE_RATE, CHUNK_CHAR_LIMIT
+    VOICE_CATALOGUE, MODEL_FILE, VOICES_FILE, SAMPLE_RATE, CHUNK_CHAR_LIMIT, resolve_voice
 )
 from core.logger import log
 from core.model_manager import ensure_piper_voice_downloaded
@@ -281,7 +281,8 @@ class TTSEngine:
         chunk_limit: int = CHUNK_CHAR_LIMIT,
         cb: Optional[Callable[[str], None]] = None,
     ) -> None:
-        cfg = VOICE_CATALOGUE.get(voice, next(iter(VOICE_CATALOGUE.values())))
+        resolved_voice = resolve_voice(voice)
+        cfg = VOICE_CATALOGUE.get(resolved_voice, next(iter(VOICE_CATALOGUE.values())))
         backend = cfg.get("backend", "kokoro")
 
         if backend == "kokoro":

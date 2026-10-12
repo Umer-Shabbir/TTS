@@ -5,6 +5,7 @@ Pages:    Synthesize | Queue | Voices | History | Settings
 Features: multi-file, pause/resume, retry, play audio, voice search,
           toast notifications, keyboard shortcuts, auto-open, timing, etc.
 """
+import json
 import os, subprocess, sys, tkinter as tk
 from datetime import datetime
 from pathlib import Path
@@ -12,7 +13,7 @@ from tkinter import ttk, filedialog, messagebox
 from typing import Callable
 
 import config.settings as CFG
-from config.settings import VOICE_CATALOGUE, APP_VERSION
+from config.settings import VOICE_CATALOGUE, APP_VERSION, resolve_voice, extract_voice_from_meta
 from core.file_handler import build_output_path, load_multiple_files, read_text_file
 from core.queue_manager import QueueManager, TTSJob
 from core.logger import log
@@ -856,7 +857,7 @@ class SynthesizePage(tk.Frame):
             self._txt.configure(fg=TEXT)
             self._txt.delete("1.0", "end")
             self._txt.insert("1.0", text)
-            self._src = stem
+            self._src = path
             self._src_lbl_v.set(f"📄 {Path(path).name}")
             self._update_count()
             self._status(f"Loaded: {Path(path).name}  ({len(text):,} chars)")
@@ -894,17 +895,18 @@ class SynthesizePage(tk.Frame):
             speed = round(float(self._speed_v.get()), 1)
 
             meta_path = folder / "project.json"
+            if not meta_path.exists():
+                meta_path = folder / "metadata.json"
+
             if meta_path.exists():
                 try:
                     import json
                     with open(meta_path, 'r', encoding='utf-8') as f:
                         meta = json.load(f)
-                    
-                    voice_name = meta.get("voice_name", "").strip()
-                    if voice_name and voice_name in VOICE_CATALOGUE:
-                        voice = voice_name
+
+                    voice = extract_voice_from_meta(meta, default_voice=voice)
                 except Exception as e:
-                    log.error(f"Failed to read project.json for voice selection: {e}")
+                    log.error(f"Failed to read {meta_path.name} for voice selection: {e}")
 
             out  = str(folder / "audio.wav")
             stem = folder.name
@@ -987,6 +989,7 @@ class SynthesizePage(tk.Frame):
 
             if meta_path.exists():
                 try:
+                    import json
                     with open(meta_path, 'r', encoding='utf-8') as f:
                         meta = json.load(f)
                         
@@ -1002,19 +1005,15 @@ class SynthesizePage(tk.Frame):
                     # If project.json states we aren't waiting for a script to be voiced, we can skip too
                     stage = meta.get('stage')
                     status = meta.get('status')
-                    
-                    if stage and stage != 'INITIAL':
-                        log.warn(f"Skipped {folder.name} — not in INITIAL state (is {stage})")
+
+                    if stage and stage not in ('INITIAL', 'SCRIPT_READY') and status != 'PENDING':
+                        log.warn(f"Skipped {folder.name} — not in voiceable state (is stage={stage}, status={status})")
                         self._status(f"Skipped: {folder.name} (wrong stage: {stage})")
                         skipped += 1
                         continue
 
-                    # TTS explicitly reads ONLY 'voice_name' from metadata per contract.
-                    # It DOES NOT interpret 'preset_name'.
-                    voice_name = meta.get("voice_name", "").strip()
-
-                    if voice_name and voice_name in VOICE_CATALOGUE:
-                        voice = voice_name
+                    # Read voice preference from metadata (voice_name, voice_id, voice, tts_voice, preset_name)
+                    voice = extract_voice_from_meta(meta, default_voice=voice)
                 except Exception as e:
                     log.error(f"Failed to read {meta_path.name} for voice selection: {e}")
 
@@ -1080,22 +1079,51 @@ class SynthesizePage(tk.Frame):
         if not self._file_list:
             self._status("⚠  No files loaded. Use  📂 Add Files…  first.")
             return
-        voice  = self._voice_v.get()
+        default_voice = self._voice_v.get()
         speed  = round(float(self._speed_v.get()), 1)
         outdir = self._cfg.get("output_dir", str(Path.home() / "tts_output"))
-        self._cfg.update({"voice": voice, "speed": speed})
+        self._cfg.update({"voice": default_voice, "speed": speed})
         CFG.save(self._cfg)
         count = 0
         for path, stem, text in self._file_list:
             if not text or text.startswith("[ERROR"):
                 continue
-            out = build_output_path(
-                outdir, stem,
-                self._cfg.get("output_template", "{name}_{ts}"),
-                voice, speed)
-            job = TTSJob(text=text, voice=voice, output_path=out,
-                         speed=speed, chunk_limit=self._cfg.get("chunk_limit", CFG.CHUNK_CHAR_LIMIT),
-                         source_name=stem)
+
+            file_voice = default_voice
+            file_out = None
+            file_proj_folder = None
+
+            parent_dir = Path(path).parent
+            meta_path = parent_dir / "project.json"
+            if not meta_path.exists():
+                meta_path = parent_dir / "metadata.json"
+
+            if meta_path.exists():
+                try:
+                    import json
+                    with open(meta_path, 'r', encoding='utf-8') as f:
+                        meta = json.load(f)
+                    file_voice = extract_voice_from_meta(meta, default_voice=default_voice)
+                    file_out = str(parent_dir / "audio.wav")
+                    file_proj_folder = str(parent_dir)
+                except Exception as e:
+                    log.error(f"Failed to read {meta_path.name} in _add_all_files: {e}")
+
+            if not file_out:
+                file_out = build_output_path(
+                    outdir, stem,
+                    self._cfg.get("output_template", "{name}_{ts}"),
+                    file_voice, speed)
+
+            job = TTSJob(
+                text=text,
+                voice=file_voice,
+                output_path=file_out,
+                speed=speed,
+                chunk_limit=self._cfg.get("chunk_limit", CFG.CHUNK_CHAR_LIMIT),
+                source_name=stem,
+                project_folder=file_proj_folder
+            )
             self._qm.enqueue(job)
             count += 1
         self._file_list.clear()
@@ -1104,20 +1132,45 @@ class SynthesizePage(tk.Frame):
         self._navigate("queue")
 
     def _queue_text(self, text: str, source: str):
-        voice  = self._voice_v.get()
-        speed  = round(float(self._speed_v.get()), 1)
+        default_voice = self._voice_v.get()
+        voice = default_voice
+        speed = round(float(self._speed_v.get()), 1)
         outdir = self._cfg.get("output_dir", str(Path.home() / "tts_output"))
-        self._cfg.update({"voice": voice, "speed": speed})
+        self._cfg.update({"voice": default_voice, "speed": speed})
         CFG.save(self._cfg)
-        out = build_output_path(
-            outdir, source,
-            self._cfg.get("output_template", "{name}_{ts}"),
-            voice, speed)
-        job = TTSJob(text=text, voice=voice, output_path=out,
+
+        out_path = None
+        proj_folder = None
+
+        try:
+            src_path = Path(source)
+            if src_path.exists():
+                parent_dir = src_path.parent if src_path.is_file() else src_path
+                meta_path = parent_dir / "project.json"
+                if not meta_path.exists():
+                    meta_path = parent_dir / "metadata.json"
+                if meta_path.exists():
+                    import json
+                    with open(meta_path, 'r', encoding='utf-8') as f:
+                        meta = json.load(f)
+                    voice = extract_voice_from_meta(meta, default_voice=default_voice)
+                    out_path = str(parent_dir / "audio.wav")
+                    proj_folder = str(parent_dir)
+        except Exception:
+            pass
+
+        if not out_path:
+            out_path = build_output_path(
+                outdir, source,
+                self._cfg.get("output_template", "{name}_{ts}"),
+                voice, speed)
+
+        job = TTSJob(text=text, voice=voice, output_path=out_path,
                      speed=speed, chunk_limit=self._cfg.get("chunk_limit", CFG.CHUNK_CHAR_LIMIT),
-                     source_name=source)
+                     source_name=Path(source).stem if Path(source).exists() else source,
+                     project_folder=proj_folder)
         self._qm.enqueue(job)
-        self._status(f"✓  Job {job.job_id} added to queue")
+        self._status(f"✓  Job {job.job_id} added to queue (voice='{voice}')")
 
     # ── Misc ──────────────────────────────────────────────────────────────────
 

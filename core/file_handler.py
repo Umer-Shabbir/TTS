@@ -85,7 +85,10 @@ def scan_master_folder(master_dir: str) -> List[Path]:
 
             try:
                 data = json.loads(read_text_file(str(project_json)))
-                if data.get("stage") == "INITIAL" and data.get("status") == "PENDING":
+                stage = data.get("stage")
+                status = data.get("status")
+                # Allow INITIAL or SCRIPT_READY stages, or PENDING/READY status, provided audio.wav doesn't exist
+                if (stage in ("INITIAL", "SCRIPT_READY") or status in ("PENDING", "READY")) and not (subdir / "audio.wav").exists():
                     valid_folders.append(subdir)
             except Exception:
                 continue

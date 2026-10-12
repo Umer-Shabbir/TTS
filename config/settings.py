@@ -123,6 +123,99 @@ DEFAULTS: dict = {
     "secondary_voice":   "",
 }
 
+def resolve_voice(voice_input: str, default: str = DEFAULT_VOICE) -> str:
+    """
+    Resolve any voice string (voice ID, full catalog name, short name, or alias)
+    to a valid key in VOICE_CATALOGUE.
+    Falls back to `default` if no match is found.
+    """
+    if not voice_input or not isinstance(voice_input, str):
+        return default
+
+    v_clean = voice_input.strip()
+    if not v_clean:
+        return default
+
+    # 1. Exact match in catalogue keys
+    if v_clean in VOICE_CATALOGUE:
+        return v_clean
+
+    v_lower = v_clean.lower()
+
+    # 2. Match against voice ID (e.g. "am_adam", "af_heart", "pt_BR-faber-medium")
+    for name, cfg in VOICE_CATALOGUE.items():
+        if cfg.get("id", "").lower() == v_lower:
+            return name
+
+    # 3. Match against key case-insensitively or with normalized spacing
+    v_normalized = " ".join(v_lower.replace("·", " ").split())
+    for name in VOICE_CATALOGUE:
+        name_norm = " ".join(name.lower().replace("·", " ").split())
+        if name_norm == v_normalized:
+            return name
+
+    # 4. Match short name (e.g. "Adam", "Heart", "Bella") before dot or space
+    for name, cfg in VOICE_CATALOGUE.items():
+        short_name = name.split("·")[0].strip().lower()
+        if short_name == v_lower or short_name == v_lower.split("·")[0].strip():
+            return name
+
+    # 5. Partial match in voice ID or name
+    for name, cfg in VOICE_CATALOGUE.items():
+        if v_lower in cfg.get("id", "").lower() or v_lower in name.lower():
+            return name
+
+    # 6. Legacy/external alias mapping
+    aliases = {
+        "en_us_male_dry_narrator": "Adam   ·  American Male",
+        "en_us_female_narrator": "Heart  ·  American Female",
+    }
+    if v_lower in aliases:
+        return aliases[v_lower]
+
+    return default
+
+
+def extract_voice_from_meta(meta: dict, default_voice: str = DEFAULT_VOICE) -> str:
+    """
+    Extract and resolve the target TTS voice from project metadata.
+    Checks voice_name, voice_id, voice, tts_voice, speaker, speaker_voice, preset_name.
+    """
+    if not isinstance(meta, dict):
+        return default_voice
+
+    raw_voice = (
+        meta.get("voice_name")
+        or meta.get("voice_id")
+        or meta.get("voice")
+        or meta.get("tts_voice")
+        or meta.get("speaker")
+        or meta.get("speaker_voice")
+    )
+
+    if raw_voice:
+        resolved = resolve_voice(str(raw_voice), default=default_voice)
+        if resolved:
+            return resolved
+
+    preset_name = meta.get("preset_name")
+    if preset_name:
+        registry_path = Path("H:/Automation/Presets/master_presets_registry.json")
+        if not registry_path.exists():
+            registry_path = Path(__file__).resolve().parent.parent.parent / "Presets" / "master_presets_registry.json"
+        if registry_path.exists():
+            try:
+                data = json.loads(registry_path.read_text(encoding="utf-8-sig"))
+                preset_info = data.get(preset_name, {})
+                preset_voice = preset_info.get("voice_name") or preset_info.get("voice_id")
+                if preset_voice:
+                    return resolve_voice(str(preset_voice), default=default_voice)
+            except Exception:
+                pass
+
+    return default_voice
+
+
 def load() -> dict:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     if CONFIG_FILE.exists():
