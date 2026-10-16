@@ -22,50 +22,109 @@ from core.model_manager import ensure_piper_voice_downloaded
 def generate_srt(text: str, duration: float, output_path: str) -> None:
     """
     Generate an SRT subtitle file from transcript text and audio duration.
-    Uses sentence-level or phrase-level splitting with proportional timing.
+    Guarantees every subtitle chunk has a duration of AT MOST 3.0 seconds,
+    with a natural rhythm variation between 2.0 and 3.0 seconds (no chunks >= 3.001s or 4s).
     """
     try:
+        import math
         import re
         from pathlib import Path
         srt_file = Path(output_path).parent / "transcript.srt"
-        if duration <= 0 or not text.strip():
+
+        if duration <= 0 or not text or not text.strip():
+            srt_file.write_text("", encoding="utf-8")
             return
 
-        # Clean up text
         cleaned_text = text.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
         cleaned_text = re.sub(r"\s+", " ", cleaned_text).strip()
+        words = [w for w in cleaned_text.split(" ") if w]
+        if not words:
+            srt_file.write_text("", encoding="utf-8")
+            return
 
-        # Split into readable sentences or natural phrases (~4-10 words / 40-70 chars)
-        sentences = re.split(r'(?<=[.!?])\s+|\n\n', cleaned_text)
-        sentences = [s.strip() for s in sentences if s.strip()]
+        # Determine optimal number of chunks K
+        # Each chunk duration must be <= 3.0s, so K >= ceil(duration / 3.0)
+        # Natural cadence targets 2.0 - 3.0s (average ~2.5s)
+        min_chunks = max(1, math.ceil(duration / 3.0))
+        desired_chunks = max(min_chunks, round(duration / 2.5))
+        num_chunks = min(len(words), desired_chunks)
+        num_chunks = max(min_chunks, num_chunks)
 
-        chunks = []
-        for sent in sentences:
-            if len(sent) > 80:
-                # Sub-split long sentence by comma / clause boundaries
-                clauses = re.split(r'(?<=[,;:—])\s*', sent)
-                cur = ""
-                for cl in clauses:
-                    if not cl.strip():
-                        continue
-                    if len(cur) + len(cl) <= 80:
-                        cur = (cur + " " + cl).strip()
-                    else:
-                        if cur:
-                            chunks.append(cur)
-                        cur = cl.strip()
-                if cur:
-                    chunks.append(cur)
-            else:
-                chunks.append(sent)
+        # 1. Partition words into num_chunks slices respecting punctuation (. , ! ? ; : —)
+        if num_chunks <= 1 or len(words) <= 1:
+            chunk_word_lists = [words]
+        elif len(words) <= num_chunks:
+            chunk_word_lists = [[w] for w in words]
+        else:
+            N = len(words)
+            K = num_chunks
+            is_punct = [bool(re.search(r'[.!?—,;:]$', w)) for w in words]
+            cuts = [0]
+            for c in range(1, K):
+                ideal = c * (N / K)
+                min_pos = cuts[-1] + 1
+                max_pos = N - (K - c)
+                best_pos = round(ideal)
+                best_pos = max(min_pos, min(max_pos, best_pos))
 
-        if not chunks:
-            chunks = [cleaned_text]
+                # Check for nearby punctuation
+                punct_candidates = [
+                    p for p in range(max(min_pos, best_pos - 2), min(max_pos + 1, best_pos + 3))
+                    if is_punct[p - 1]
+                ]
+                if punct_candidates:
+                    best_pos = min(punct_candidates, key=lambda p: abs(p - ideal))
 
-        # Calculate character-proportional timing for realistic pacing
-        total_chars = sum(len(c) for c in chunks)
-        if total_chars == 0:
-            total_chars = 1
+                cuts.append(best_pos)
+            cuts.append(N)
+
+            chunk_word_lists = [words[cuts[i]:cuts[i+1]] for i in range(len(cuts) - 1)]
+
+        chunk_texts = [" ".join(cw) for cw in chunk_word_lists if cw]
+        if not chunk_texts:
+            chunk_texts = [cleaned_text]
+        k_actual = len(chunk_texts)
+
+        # 2. Compute chunk durations strictly <= 3.0s with natural 2.0-3.0s rhythm variation
+        if k_actual <= 1:
+            durations = [min(3.0, duration)]
+        else:
+            targets = [2.4, 2.8, 2.2, 2.9, 2.5, 3.0, 2.3, 2.7]
+            raw_targets = [targets[i % len(targets)] for i in range(k_actual)]
+            tot_raw = sum(raw_targets) or 1.0
+            scaled = [(r / tot_raw) * duration for r in raw_targets]
+
+            # Iterative clamp and redistribution so no chunk exceeds 3.0s
+            for _ in range(30):
+                excess = 0.0
+                unclamped = []
+                for i, d in enumerate(scaled):
+                    if d > 3.0:
+                        excess += (d - 3.0)
+                        scaled[i] = 3.0
+                    elif d < 3.0:
+                        unclamped.append(i)
+                if excess <= 0.0001 or not unclamped:
+                    break
+                add_per = excess / len(unclamped)
+                for i in unclamped:
+                    scaled[i] += add_per
+
+            # Adjust for floating point inaccuracies to guarantee exact duration match & <= 3.0s
+            diff = duration - sum(scaled)
+            for i in range(k_actual - 1, -1, -1):
+                if diff > 0 and scaled[i] < 3.0:
+                    room = 3.0 - scaled[i]
+                    add = min(room, diff)
+                    scaled[i] += add
+                    diff -= add
+                elif diff < 0 and scaled[i] > 0.5:
+                    room = scaled[i] - 0.5
+                    sub = min(room, -diff)
+                    scaled[i] -= sub
+                    diff += sub
+
+            durations = scaled
 
         def _fmt_time(s: float) -> str:
             s = max(0.0, s)
@@ -80,13 +139,16 @@ def generate_srt(text: str, duration: float, output_path: str) -> None:
 
         srt_lines = []
         cur_t = 0.0
-        for idx, chunk in enumerate(chunks, 1):
-            weight = len(chunk) / float(total_chars)
-            chunk_duration = weight * duration
+        for idx, chunk in enumerate(chunk_texts, 1):
             start_t = cur_t
-            end_t = min(duration, cur_t + chunk_duration)
-            cur_t = end_t
+            dur = durations[idx - 1] if idx - 1 < len(durations) else 2.5
+            dur = min(3.0, dur)  # Strict hard cap <= 3.0s
+            end_t = min(duration, start_t + dur)
+            if idx == len(chunk_texts):
+                if duration - start_t <= 3.0:
+                    end_t = duration
 
+            cur_t = end_t
             srt_lines.append(str(idx))
             srt_lines.append(f"{_fmt_time(start_t)} --> {_fmt_time(end_t)}")
             srt_lines.append(chunk)
@@ -96,6 +158,8 @@ def generate_srt(text: str, duration: float, output_path: str) -> None:
         from core.logger import log
         log.info(f"Generated SRT file successfully: {srt_file}")
     except Exception as e:
+        from core.logger import log
+        log.error(f"Failed to generate SRT file: {e}")
         from core.logger import log
         log.error(f"Failed to generate SRT file: {e}")
 

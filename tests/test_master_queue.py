@@ -7,8 +7,7 @@ import json
 mock_tts_backend = MagicMock()
 class MockTTSEngine:
     def synthesize(self, text, out_path, voice, speed, chunk_limit, cb):
-        import time
-        time.sleep(0.1)
+        Path(out_path).touch()
 
 mock_tts_backend.TTSEngine = MockTTSEngine
 sys.modules['core.tts_backend'] = mock_tts_backend
@@ -28,6 +27,7 @@ def test_queue_updates_project_json(tmp_path):
     pjson.write_text(json.dumps({"stage": "INITIAL", "status": "PENDING"}), encoding="utf-8")
     
     qm = QueueManager(mock_scheduler)
+    qm._engine = MockTTSEngine()
     
     job = TTSJob(
         text="Hello",
@@ -39,15 +39,17 @@ def test_queue_updates_project_json(tmp_path):
     qm.enqueue(job)
     
     import time
-    time.sleep(1) # wait for worker
+    data = {}
+    for _ in range(50):
+        if job.status == "completed":
+            with open(pjson, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("stage") == "VOICED":
+                break
+        time.sleep(0.1)
     
     assert job.status == "completed"
-    
-    # Read project check if updated
-    with open(pjson, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    
-    assert data["stage"] == "VOICED"
-    assert data["status"] == "COMPLETED"
+    assert data.get("stage") == "VOICED"
+    assert data.get("status") == "COMPLETED"
 
     qm.shutdown()

@@ -152,8 +152,17 @@ class QueueManager:
                     pjson = Path(job.project_folder) / "project.json"
 
                     duration_val = 0.0
-                    if job.started_at and job.finished_at:
-                        duration_val = (job.finished_at - job.started_at).total_seconds()
+                    try:
+                        import soundfile as sf
+                        duration_val = float(sf.info(job.output_path).duration)
+                    except Exception:
+                        try:
+                            import wave
+                            with wave.open(job.output_path, "rb") as wf:
+                                duration_val = float(wf.getnframes() / float(wf.getframerate()))
+                        except Exception:
+                            if job.started_at and job.finished_at:
+                                duration_val = (job.finished_at - job.started_at).total_seconds()
 
                     # Generate the SRT file in the same folder as the output audio
                     generate_srt(job.text, duration_val, job.output_path)
