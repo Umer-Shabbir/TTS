@@ -103,6 +103,28 @@ VOICE_CATALOGUE: dict[str, dict] = {
     "Swara  ·  Hindi Female (Online)":      {"id": "hi-IN-SwaraNeural", "lang": "hi-in", "gender": "female", "backend": "edgetts", "desc": "Premium Hindi Female (Online)"},
     "Asad   ·  Urdu Male (Online)":         {"id": "ur-PK-AsadNeural", "lang": "ur-pk", "gender": "male", "backend": "edgetts", "desc": "Pakistani Urdu Male (Online)"},
     "Uzma   ·  Urdu Female (Online)":       {"id": "ur-PK-UzmaNeural", "lang": "ur-pk", "gender": "female", "backend": "edgetts", "desc": "Pakistani Urdu Female (Online)"},
+
+    # ── ElevenLabs (Neural High-Fidelity & Cloned Voices) ─────────────────────
+    "Rachel ·  ElevenLabs (Female)":        {"id": "21m00Tcm4TlvDq8ikWAM", "lang": "multilingual", "gender": "female", "backend": "elevenlabs", "desc": "Calm, warm American female — great for narration"},
+    "Adam   ·  ElevenLabs (Male)":          {"id": "pNInz6obpgDQGcFmaJgB", "lang": "multilingual", "gender": "male",   "backend": "elevenlabs", "desc": "Deep, confident American male — narration & documentaries"},
+    "Antoni ·  ElevenLabs (Male)":          {"id": "ErXwobaYiN019PkySvjV", "lang": "multilingual", "gender": "male",   "backend": "elevenlabs", "desc": "Well-rounded, smooth American male voice"},
+    "Bella  ·  ElevenLabs (Female)":        {"id": "EXAVITQu4vr4xnSDxMaL", "lang": "multilingual", "gender": "female", "backend": "elevenlabs", "desc": "Bright, expressive American female voice"},
+    "Charlie·  ElevenLabs (Male)":          {"id": "IKne3meq5aSn9XLyUdCD", "lang": "multilingual", "gender": "male",   "backend": "elevenlabs", "desc": "Casual, conversational Australian male"},
+    "Domi   ·  ElevenLabs (Female)":        {"id": "AZnzlk1XvdvUeBnXmlld", "lang": "multilingual", "gender": "female", "backend": "elevenlabs", "desc": "Strong, engaging American female voice"},
+    "Elli   ·  ElevenLabs (Female)":        {"id": "MF3mGyEYCl7XYWbV9V6O", "lang": "multilingual", "gender": "female", "backend": "elevenlabs", "desc": "Emotional, expressive American female voice"},
+    "Josh   ·  ElevenLabs (Male)":          {"id": "TxGEqnHWrfWFTfGW9XjX", "lang": "multilingual", "gender": "male",   "backend": "elevenlabs", "desc": "Deep, authoritative American male voice"},
+    "Sam    ·  ElevenLabs (Male)":          {"id": "yoZ06aMxZJJ28mfd3POQ", "lang": "multilingual", "gender": "male",   "backend": "elevenlabs", "desc": "Dynamic, raspy American male voice"},
+    "Jonathan - Professional, Calm, Credible, Clear  ·  ElevenLabs (Male)": {"id": "oyxaSt75JW8l04MCJaSo", "lang": "multilingual", "gender": "male", "backend": "elevenlabs", "desc": "Warm, confident, credible technical explainer"},
+    "George - Warm, Captivating Storyteller  ·  ElevenLabs (Male)": {"id": "JBFqnCBsd6RMkjVDRZzb", "lang": "multilingual", "gender": "male", "backend": "elevenlabs", "desc": "Warm British resonance that captivates listeners"},
+    "Johnny - authentic and expressive  ·  ElevenLabs (Male)": {"id": "S3jSeCD6zxApO2SHREet", "lang": "multilingual", "gender": "male", "backend": "elevenlabs", "desc": "Authentic, friendly casual storyteller for explainers"},
+    "Laura - Enthusiast, Quirky Attitude  ·  ElevenLabs (Female)": {"id": "FGY2WhTYpPnrIDTdsKH5", "lang": "multilingual", "gender": "female", "backend": "elevenlabs", "desc": "Sunny enthusiasm with quirky energy"},
+    "Sarah - Mature, Reassuring, Confident  ·  ElevenLabs (Female)": {"id": "EXAVITQu4vr4xnSDxMaL", "lang": "multilingual", "gender": "female", "backend": "elevenlabs", "desc": "Confident, mature, reassuring delivery"},
+    "Roger - Laid-Back, Casual, Resonant  ·  ElevenLabs (Male)": {"id": "CwhRBWXzGAHq8TQ4Fs17", "lang": "multilingual", "gender": "male", "backend": "elevenlabs", "desc": "Laid-back, casual, resonant pacing"},
+    "Steve  ·  ElevenLabs (Male)":          {"id": "s7VgmkAoDwT6l2zXqEPV", "lang": "multilingual", "gender": "male",   "backend": "elevenlabs", "desc": "Raspy British voice with counterculture grit"},
+    "Jeremy - Young, Confident, American Male  ·  ElevenLabs (Male)": {"id": "bkWmSiLbVbuhntmf2Kw7", "lang": "multilingual", "gender": "male", "backend": "elevenlabs", "desc": "Young, confident American male for financial explainers"},
+    "Mother - Strong, Warm, Calm  ·  ElevenLabs (Female)": {"id": "TLeBnGDqmcwGf936zZyW", "lang": "multilingual", "gender": "female", "backend": "elevenlabs", "desc": "Deep, calm authority with gentle grit"},
+    "Don Kim  ·  ElevenLabs (Male)":        {"id": "UI9arZeSp7bIUhGbx36K", "lang": "multilingual", "gender": "male",   "backend": "elevenlabs", "desc": "Calm, slightly raspy narrative tone"},
+    "Michael C. Vincent  ·  ElevenLabs (Male)": {"id": "uju3wxzG5OhpWcoi3SMy", "lang": "multilingual", "gender": "male", "backend": "elevenlabs", "desc": "Warm bass tones, crisp clarity, articulate storytelling"},
 }
 
 DEFAULT_VOICE    = "Heart  ·  American Female"
@@ -121,6 +143,9 @@ DEFAULTS: dict = {
     "smart_pacing":      True,
     "blend_voice_ratio": 0.0,
     "secondary_voice":   "",
+    "elevenlabs_api_keys": [],
+    "elevenlabs_model_id": "eleven_multilingual_v2",
+    "elevenlabs_cached_voices": {},
 }
 
 def resolve_voice(voice_input: str, default: str = DEFAULT_VOICE) -> str:
@@ -207,7 +232,19 @@ def extract_voice_from_meta(meta: dict, default_voice: str = DEFAULT_VOICE) -> s
             try:
                 data = json.loads(registry_path.read_text(encoding="utf-8-sig"))
                 preset_info = data.get(preset_name, {})
-                preset_voice = preset_info.get("voice_name") or preset_info.get("voice_id")
+                use_el = (
+                    meta.get("use_elevenlabs")
+                    or meta.get("backend") == "elevenlabs"
+                    or meta.get("voice_backend") == "elevenlabs"
+                )
+                if use_el and preset_info.get("elevenlabs_voice"):
+                    return resolve_voice(str(preset_info.get("elevenlabs_voice")), default=default_voice)
+                preset_voice = (
+                    preset_info.get("offline_voice")
+                    or preset_info.get("voice_name")
+                    or preset_info.get("voice_id")
+                    or preset_info.get("elevenlabs_voice")
+                )
                 if preset_voice:
                     return resolve_voice(str(preset_voice), default=default_voice)
             except Exception:
@@ -216,16 +253,57 @@ def extract_voice_from_meta(meta: dict, default_voice: str = DEFAULT_VOICE) -> s
     return default_voice
 
 
+def sync_elevenlabs_voices(cached_voices: dict = None) -> None:
+    """
+    Merge cached or newly fetched ElevenLabs voices into VOICE_CATALOGUE in-place.
+    """
+    if cached_voices is None:
+        try:
+            cfg = load()
+            cached_voices = cfg.get("elevenlabs_cached_voices", {})
+        except Exception:
+            cached_voices = {}
+
+    if not isinstance(cached_voices, dict):
+        return
+
+    for cat_name, info in cached_voices.items():
+        if isinstance(info, dict) and info.get("id"):
+            VOICE_CATALOGUE[cat_name] = {
+                "id": str(info.get("id", "")).strip(),
+                "name": str(info.get("name", cat_name)).strip(),
+                "lang": str(info.get("lang", "multilingual")),
+                "gender": str(info.get("gender", "neutral")),
+                "backend": "elevenlabs",
+                "desc": str(info.get("desc", "ElevenLabs Voice")),
+                "category": str(info.get("category", "premade")),
+                "preview_url": str(info.get("preview_url", "")),
+            }
+
+
 def load() -> dict:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    cfg = dict(DEFAULTS)
     if CONFIG_FILE.exists():
         try:
             saved = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-            return {**DEFAULTS, **saved}
+            cfg = {**DEFAULTS, **saved}
         except Exception:
             pass
-    return dict(DEFAULTS)
+    # Automatically ensure cached voices are in VOICE_CATALOGUE
+    sync_elevenlabs_voices(cfg.get("elevenlabs_cached_voices", {}))
+    return cfg
+
 
 def save(cfg: dict) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    if "elevenlabs_cached_voices" in cfg:
+        sync_elevenlabs_voices(cfg.get("elevenlabs_cached_voices", {}))
+
+# Load any existing cached voices on import
+try:
+    sync_elevenlabs_voices()
+except Exception:
+    pass
+

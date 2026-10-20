@@ -135,7 +135,7 @@ class QueueManager:
             self._emit("started", jid)
 
             try:
-                self._engine.synthesize(
+                timed_segments = self._engine.synthesize(
                     text=job.text, out_path=job.output_path,
                     voice=job.voice, speed=job.speed,
                     chunk_limit=job.chunk_limit,
@@ -145,27 +145,28 @@ class QueueManager:
                 log.step(f"Job {jid} COMPLETED in {job.duration_str} "
                          f"→ {job.output_path}")
 
+                from core.tts_backend import generate_srt
+
+                duration_val = 0.0
+                try:
+                    import soundfile as sf
+                    duration_val = float(sf.info(job.output_path).duration)
+                except Exception:
+                    try:
+                        import wave
+                        with wave.open(job.output_path, "rb") as wf:
+                            duration_val = float(wf.getnframes() / float(wf.getframerate()))
+                    except Exception:
+                        if job.started_at and job.finished_at:
+                            duration_val = (job.finished_at - job.started_at).total_seconds()
+
+                # Generate the SRT file with acoustic buffer accuracy in the same folder as the output audio
+                generate_srt(job.text, duration_val, job.output_path, timed_segments=timed_segments)
+
                 if job.project_folder:
                     import json
                     from pathlib import Path
-                    from core.tts_backend import generate_srt
                     pjson = Path(job.project_folder) / "project.json"
-
-                    duration_val = 0.0
-                    try:
-                        import soundfile as sf
-                        duration_val = float(sf.info(job.output_path).duration)
-                    except Exception:
-                        try:
-                            import wave
-                            with wave.open(job.output_path, "rb") as wf:
-                                duration_val = float(wf.getnframes() / float(wf.getframerate()))
-                        except Exception:
-                            if job.started_at and job.finished_at:
-                                duration_val = (job.finished_at - job.started_at).total_seconds()
-
-                    # Generate the SRT file in the same folder as the output audio
-                    generate_srt(job.text, duration_val, job.output_path)
 
                     if pjson.exists():
                         try:

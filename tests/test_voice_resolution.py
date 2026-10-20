@@ -48,7 +48,7 @@ def test_extract_voice_from_meta_fields():
     assert extract_voice_from_meta({"voice_name": "am_adam"}) == "Adam   ·  American Male"
     assert extract_voice_from_meta({"voice": "George"}) == "George ·  British Male"
     assert extract_voice_from_meta({"tts_voice": "Heart"}) == "Heart  ·  American Female"
-    assert extract_voice_from_meta({"preset_name": "paper_glass"}) == "Adam   ·  American Male"
+    assert extract_voice_from_meta({"preset_name": "paper_glass"}) == "Emma   ·  British Female"
 
 
 def test_scan_master_folder_script_ready_stage(tmp_path):

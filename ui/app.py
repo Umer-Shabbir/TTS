@@ -13,7 +13,11 @@ from tkinter import ttk, filedialog, messagebox
 from typing import Callable
 
 import config.settings as CFG
-from config.settings import VOICE_CATALOGUE, APP_VERSION, resolve_voice, extract_voice_from_meta
+from config.settings import VOICE_CATALOGUE, APP_VERSION, resolve_voice, extract_voice_from_meta, sync_elevenlabs_voices
+from core.elevenlabs_client import (
+    validate_api_key, validate_bulk_keys, fetch_elevenlabs_voices,
+    parse_bulk_keys, ElevenLabsKeyManager, mask_key, ELEVENLABS_MODELS, DEFAULT_MODEL_ID
+)
 from core.file_handler import build_output_path, load_multiple_files, read_text_file
 from core.queue_manager import QueueManager, TTSJob
 from core.logger import log
@@ -478,7 +482,7 @@ class VoiceCard(tk.Frame):
             "hi-in": "Hindi", "ur-pk": "Urdu"
         }
         lang_nice = lang_map.get(info.get("lang","").lower(), info.get("lang",""))
-        backend = info.get("backend", "kokoro").capitalize()
+        backend = "ElevenLabs" if info.get("backend") == "elevenlabs" else info.get("backend", "kokoro").capitalize()
 
         tk.Label(self, text=f"ID: {info.get('id', info.get('speaker',''))}",
                  bg=cbg, fg=acc, font=("Segoe UI", 9, "bold"),
@@ -611,6 +615,7 @@ class SynthesizePage(tk.Frame):
                            values=voices, state="readonly", font=("Segoe UI", 9))
         cb.grid(row=1, column=0, sticky="ew")
         cb.bind("<<ComboboxSelected>>", self._on_voice_changed)
+        self._voice_cb = cb
 
         self._vinfo_v = tk.StringVar()
         self._vinfo_lbl = tk.Label(right, textvariable=self._vinfo_v,
@@ -1218,6 +1223,16 @@ class SynthesizePage(tk.Frame):
         self._cfg["voice"] = self._voice_v.get()
         CFG.save(self._cfg)
 
+    def refresh_voice_list(self):
+        """Reload combobox items when voices are added or updated."""
+        voices = list(VOICE_CATALOGUE.keys())
+        if hasattr(self, "_voice_cb"):
+            self._voice_cb["values"] = voices
+        cur = self._voice_v.get()
+        if cur not in voices and voices:
+            self._voice_v.set(voices[0])
+        self._refresh_vinfo()
+
     def set_voice(self, name: str):
         """Called from Voices page."""
         if name in VOICE_CATALOGUE:
@@ -1482,7 +1497,7 @@ class VoicesPage(tk.Frame):
         hdr.pack(fill="x", padx=24, pady=(18, 8))
         tk.Label(hdr, text="Voices", bg=BG, fg=TEXT,
                  font=("Segoe UI", 18, "bold")).pack(side="left")
-        tk.Label(hdr, text=f"  ·  {len(VOICE_CATALOGUE)} voices  ·  Multi-Backend (Kokoro, Piper, Edge-TTS)",
+        self._hdr_label = tk.Label(hdr, text=f"  ·  {len(VOICE_CATALOGUE)} voices  ·  Multi-Backend (Kokoro, Piper, Edge-TTS, ElevenLabs)",
                  bg=BG, fg=TEXT2, font=("Segoe UI", 10)).pack(side="left", pady=(6, 0))
         _sep(self).pack(fill="x", padx=24)
 
@@ -1490,20 +1505,37 @@ class VoicesPage(tk.Frame):
         ctrl = tk.Frame(self, bg=BG)
         ctrl.pack(fill="x", padx=24, pady=(10, 6))
 
+        # Backend / Engine filter
+        self._filter_backend = "all"
+        backend_f = tk.Frame(ctrl, bg=BG)
+        backend_f.pack(side="left", padx=(0, 12))
+        tk.Label(backend_f, text="Engine:", bg=BG, fg=TEXT2, font=("Segoe UI", 9)).pack(side="left", padx=(0, 4))
+        self._backend_btns: dict[str, tk.Button] = {}
+        for bkey, blbl in [("all", "All"), ("elevenlabs", "ElevenLabs"), ("kokoro", "Kokoro"), ("piper", "Piper"), ("edgetts", "Edge-TTS")]:
+            is_b = bkey == "all"
+            btn = tk.Button(backend_f, text=blbl,
+                            bg=ACCENT if is_b else CARD,
+                            fg="white" if is_b else TEXT2,
+                            relief="flat", font=("Segoe UI", 9),
+                            padx=7, pady=4, cursor="hand2",
+                            command=lambda k=bkey: self._set_backend_filter(k))
+            btn.pack(side="left", padx=(0, 2))
+            self._backend_btns[bkey] = btn
+
         # Language filter
         self._filter_lang = "all"
         lang_filter_f = tk.Frame(ctrl, bg=BG)
-        lang_filter_f.pack(side="left", padx=(0, 16))
-        tk.Label(lang_filter_f, text="Language:", bg=BG, fg=TEXT2, font=("Segoe UI", 9)).pack(side="left", padx=(0,6))
+        lang_filter_f.pack(side="left", padx=(0, 12))
+        tk.Label(lang_filter_f, text="Lang:", bg=BG, fg=TEXT2, font=("Segoe UI", 9)).pack(side="left", padx=(0, 4))
 
         self._lang_vars: dict[str, tk.Button] = {}
-        for key, lbl in [("all", "All"), ("en", "English"), ("pt", "Portuguese"), ("ko", "Korean"), ("zh", "Chinese"), ("hi", "Hindi"), ("ur", "Urdu")]:
+        for key, lbl in [("all", "All"), ("en", "EN"), ("pt", "PT"), ("ko", "KO"), ("zh", "ZH"), ("hi", "HI"), ("ur", "UR")]:
             is_a = key == "all"
             b = tk.Button(lang_filter_f, text=lbl,
                           bg=ACCENT if is_a else CARD,
                           fg="white" if is_a else TEXT2,
                           relief="flat", font=("Segoe UI", 9),
-                          padx=8, pady=4, cursor="hand2",
+                          padx=6, pady=4, cursor="hand2",
                           command=lambda k=key: self._set_lang_filter(k))
             b.pack(side="left", padx=(0, 2))
             self._lang_vars[key] = b
@@ -1550,6 +1582,12 @@ class VoicesPage(tk.Frame):
             b.configure(bg=acc if k == key else CARD, fg="white" if k == key else TEXT2)
         self._refresh_grid()
 
+    def _set_backend_filter(self, key: str):
+        self._filter_backend = key
+        for k, b in self._backend_btns.items():
+            b.configure(bg=ACCENT if k == key else CARD, fg="white" if k == key else TEXT2)
+        self._refresh_grid()
+
     def _set_lang_filter(self, key: str):
         self._filter_lang = key
         for k, b in self._lang_vars.items():
@@ -1566,6 +1604,10 @@ class VoicesPage(tk.Frame):
         # Filter logic
         filtered_voices = []
         for n, i in VOICE_CATALOGUE.items():
+            # Apply Backend Filter
+            if getattr(self, "_filter_backend", "all") != "all" and i.get("backend") != self._filter_backend:
+                continue
+
             # Apply Gender Filter
             if self._filter_g != "all" and i.get("gender") != self._filter_g:
                 continue
@@ -1608,6 +1650,8 @@ class VoicesPage(tk.Frame):
         self._on_select(name)
 
     def refresh(self):
+        if hasattr(self, "_hdr_label"):
+            self._hdr_label.configure(text=f"  ·  {len(VOICE_CATALOGUE)} voices  ·  Multi-Backend (Kokoro, Piper, Edge-TTS, ElevenLabs)")
         self._refresh_grid()
 
 
@@ -1740,6 +1784,203 @@ class HistoryPage(tk.Frame):
 #  Page: Settings
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Dialog: BulkKeysDialog (Add & Validate ElevenLabs Keys)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class BulkKeysDialog(tk.Toplevel):
+    def __init__(self, parent, cfg: dict, on_success: Callable, root_window=None):
+        super().__init__(parent)
+        self._cfg = cfg
+        self._on_success = on_success
+        self._root_window = root_window or parent
+        self.title("Add ElevenLabs API Keys (Bulk & Live Validation)")
+        self.geometry("680x580")
+        self.minsize(560, 440)
+        self.configure(bg=BG)
+        self.transient(parent)
+        self.grab_set()
+
+        self._is_validating = False
+        self._build()
+
+    def _build(self):
+        # Header
+        hdr = tk.Frame(self, bg=BG)
+        hdr.pack(fill="x", padx=24, pady=(18, 8))
+        tk.Label(hdr, text="Add ElevenLabs API Keys (Bulk)", bg=BG, fg=TEXT,
+                 font=("Segoe UI", 15, "bold")).pack(anchor="w")
+        tk.Label(hdr,
+                 text="Paste one or multiple API keys below (separated by newlines, commas, or spaces).\n"
+                      "Each key is validated against the ElevenLabs API immediately upon adding.",
+                 bg=BG, fg=TEXT2, font=("Segoe UI", 9), justify="left").pack(anchor="w", pady=(4, 0))
+        _sep(self).pack(fill="x", padx=24, pady=(8, 12))
+
+        # Input Area
+        in_frame = tk.Frame(self, bg=BG)
+        in_frame.pack(fill="x", padx=24)
+        tk.Label(in_frame, text="API Keys to Add:", bg=BG, fg=TEXT2, font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(0, 4))
+        
+        self._txt_keys = tk.Text(in_frame, bg=CARD, fg=TEXT, insertbackground=TEXT,
+                                 font=("Consolas", 10), height=5, relief="flat",
+                                 highlightthickness=1, highlightbackground=BORDER2)
+        self._txt_keys.pack(fill="x")
+        self._txt_keys.insert("1.0", "# Paste your ElevenLabs API keys here (one per line):\n")
+
+        # Controls & action buttons
+        btn_row = tk.Frame(self, bg=BG)
+        btn_row.pack(fill="x", padx=24, pady=(10, 8))
+
+        self._btn_validate = _btn(
+            btn_row, "⚡ Validate & Save Keys", self._start_validation,
+            bg=ACCENT, fg="white", font=("Segoe UI", 10, "bold"), padx=14, pady=6
+        )
+        self._btn_validate.pack(side="left")
+
+        _btn(btn_row, "Clear", self._clear_input,
+             bg=CARD, fg=TEXT2, font=("Segoe UI", 9), padx=10, pady=6).pack(side="left", padx=(8, 0))
+
+        self._status_lbl = tk.Label(btn_row, text="Ready", bg=BG, fg=TEXT3, font=("Segoe UI", 9))
+        self._status_lbl.pack(side="left", padx=(14, 0))
+
+        _sep(self).pack(fill="x", padx=24, pady=(6, 8))
+
+        # Live Results List
+        tk.Label(self, text="Validation Progress & Live Results:", bg=BG, fg=TEXT2,
+                 font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=24, pady=(0, 4))
+
+        self._scroll = ScrollFrame(self, bg=BG)
+        self._scroll.pack(fill="both", expand=True, padx=24, pady=(0, 16))
+
+        # Initial placeholder
+        self._empty_res = tk.Label(self._scroll.inner,
+                                   text="Paste keys above and click 'Validate & Save Keys'.",
+                                   bg=BG, fg=TEXT3, font=("Segoe UI", 9))
+        self._empty_res.pack(pady=20)
+
+    def _clear_input(self):
+        self._txt_keys.delete("1.0", "end")
+
+    def _start_validation(self):
+        if self._is_validating:
+            return
+
+        raw_text = self._txt_keys.get("1.0", "end")
+        keys = parse_bulk_keys(raw_text)
+
+        if not keys:
+            messagebox.showwarning("No Keys Provided", "Please enter at least one valid ElevenLabs API key.", parent=self)
+            return
+
+        self._is_validating = True
+        self._btn_validate.configure(state="disabled", text="⏳ Checking Keys…")
+        self._status_lbl.configure(text=f"Validating 0 / {len(keys)} keys…", fg=WARNING)
+
+        # Clear results frame
+        for w in self._scroll.inner.winfo_children():
+            w.destroy()
+
+        import threading
+        t = threading.Thread(target=self._run_validation_thread, args=(keys,), daemon=True)
+        t.start()
+
+    def _on_key_checked(self, completed: int, total: int, res: dict):
+        # Called on background thread -> schedule on main thread
+        self.after(0, lambda: self._render_key_result(completed, total, res))
+
+    def _render_key_result(self, completed: int, total: int, res: dict):
+        self._status_lbl.configure(text=f"Validated {completed} / {total} keys…", fg=WARNING if completed < total else SUCCESS)
+
+        row = tk.Frame(self._scroll.inner, bg=CARD, highlightthickness=1, highlightbackground=BORDER)
+        row.pack(fill="x", pady=3, padx=2)
+
+        is_valid = res.get("valid", False)
+        status = res.get("status", "")
+        if is_valid and status != "quota_exhausted":
+            badge_txt = "✓ Valid"
+            badge_color = SUCCESS
+        elif status == "quota_exhausted":
+            badge_txt = "⚠ Quota Exceeded"
+            badge_color = WARNING
+        else:
+            badge_txt = "✗ Invalid"
+            badge_color = ERROR
+
+        tk.Label(row, text=badge_txt, bg=CARD, fg=badge_color,
+                 font=("Segoe UI", 9, "bold"), width=16, anchor="w").pack(side="left", padx=(10, 6), pady=6)
+
+        tk.Label(row, text=res.get("masked", ""), bg=CARD, fg=TEXT,
+                 font=("Consolas", 9, "bold"), width=18, anchor="w").pack(side="left", padx=(0, 8))
+
+        tk.Label(row, text=res.get("message", ""), bg=CARD, fg=TEXT2,
+                 font=("Segoe UI", 9), anchor="w").pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+    def _run_validation_thread(self, keys: list[str]):
+        results = validate_bulk_keys(keys, max_workers=4, progress_cb=self._on_key_checked)
+
+        # Update saved keys in config
+        existing_keys = ElevenLabsKeyManager.get_stored_keys(self._cfg)
+        existing_map = {k["key"]: k for k in existing_keys}
+
+        valid_count = 0
+        newly_added = 0
+        for r in results:
+            k_str = r["key"]
+            if r["valid"]:
+                valid_count += 1
+            if k_str in existing_map:
+                # Update existing record
+                existing_map[k_str].update(r)
+            else:
+                existing_keys.append(r)
+                existing_map[k_str] = r
+                newly_added += 1
+
+        self._cfg["elevenlabs_api_keys"] = existing_keys
+        CFG.save(self._cfg)
+
+        # If at least one key is valid, automatically fetch voices!
+        voices_fetched = 0
+        active_key = ElevenLabsKeyManager.get_active_key(self._cfg)
+        if active_key:
+            try:
+                raw_v, cat_dict = fetch_elevenlabs_voices(active_key)
+                if cat_dict:
+                    self._cfg["elevenlabs_cached_voices"] = cat_dict
+                    CFG.save(self._cfg)
+                    sync_elevenlabs_voices(cat_dict)
+                    voices_fetched = len(cat_dict)
+            except Exception as e:
+                log.warn(f"Auto-fetch voices after key validation failed: {e}")
+
+        # Finish on main thread
+        self.after(0, lambda: self._on_validation_complete(len(results), valid_count, voices_fetched))
+
+    def _on_validation_complete(self, total: int, valid_count: int, voices_fetched: int):
+        self._is_validating = False
+        self._btn_validate.configure(state="normal", text="⚡ Validate & Save Keys")
+
+        summary_msg = f"Done! {valid_count} / {total} keys valid."
+        if voices_fetched > 0:
+            summary_msg += f" Retrieved {voices_fetched} voices into catalogue."
+
+        self._status_lbl.configure(text=summary_msg, fg=SUCCESS if valid_count > 0 else ERROR)
+
+        # Notify parent / app to refresh
+        self._on_success()
+
+        # Toast notification
+        Toast(self._root_window,
+              f"ElevenLabs Keys Added\n{valid_count} valid key(s) saved · {voices_fetched} voices loaded",
+              bg=SUCCESS_B if valid_count > 0 else ERROR_B,
+              fg=SUCCESS_L if valid_count > 0 else ERROR_L)
+
+        # Add Done/Close button
+        done_btn = _btn(self, "Done / Close", self.destroy, bg=BORDER2, fg=TEXT, padx=14, pady=6)
+        done_btn.pack(pady=(0, 12))
+
+
 class SettingsPage(tk.Frame):
     def __init__(self, parent, cfg: dict, on_sync: Callable, **kw):
         super().__init__(parent, bg=BG, **kw)
@@ -1818,6 +2059,52 @@ class SettingsPage(tk.Frame):
                       row=0, column=1, sticky="ew", padx=(8, 8))
         tk.Label(f, textvariable=self._speed_lbl_v, bg=BG, fg=ACCENT_L,
                  font=("Segoe UI", 11, "bold"), width=5).grid(row=0, column=2)
+
+        # ── ElevenLabs API & Bulk Keys ─────────────────────────────────
+        section("🎙  ELEVENLABS API & BULK KEYS")
+
+        el_card = tk.Frame(p, bg=CARD, highlightthickness=1, highlightbackground=BORDER)
+        el_card.pack(fill="x", padx=24, pady=(0, 8))
+
+        # Row 1: Key Pool Status
+        el_row1 = tk.Frame(el_card, bg=CARD)
+        el_row1.pack(fill="x", padx=16, pady=(10, 4))
+        tk.Label(el_row1, text="Key Pool Status:", bg=CARD, fg=TEXT,
+                 font=("Segoe UI", 10, "bold"), width=16, anchor="w").pack(side="left")
+        self._el_status_v = tk.StringVar(value="Checking keys…")
+        tk.Label(el_row1, textvariable=self._el_status_v, bg=CARD, fg=ACCENT_L,
+                 font=("Segoe UI", 9, "bold")).pack(side="left")
+
+        # Row 2: Model Selector
+        el_row2 = tk.Frame(el_card, bg=CARD)
+        el_row2.pack(fill="x", padx=16, pady=4)
+        tk.Label(el_row2, text="Default Model:", bg=CARD, fg=TEXT,
+                 font=("Segoe UI", 10), width=16, anchor="w").pack(side="left")
+        
+        model_names = [m[0] for m in ELEVENLABS_MODELS]
+        self._el_model_v = tk.StringVar(value=self._cfg.get("elevenlabs_model_id", DEFAULT_MODEL_ID))
+        el_m_cb = ttk.Combobox(el_row2, textvariable=self._el_model_v, values=model_names,
+                               state="readonly", font=("Segoe UI", 9), width=28)
+        el_m_cb.pack(side="left")
+        el_m_cb.bind("<<ComboboxSelected>>", self._save_el_model)
+
+        # Row 3: Action Buttons
+        el_row3 = tk.Frame(el_card, bg=CARD)
+        el_row3.pack(fill="x", padx=16, pady=(6, 12))
+
+        _btn(el_row3, "➕ Add Keys in Bulk…", self._open_bulk_keys_dialog,
+             bg=ACCENT, fg="white", font=("Segoe UI", 9, "bold"), padx=10, pady=5).pack(side="left", padx=(0, 8))
+
+        _btn(el_row3, "🔄 Fetch / Refresh Voices", self._fetch_elevenlabs_voices_action,
+             bg=BORDER2, fg=TEXT, font=("Segoe UI", 9), padx=10, pady=5).pack(side="left", padx=(0, 8))
+
+        _btn(el_row3, "🩺 Test All Keys", self._test_all_keys_action,
+             bg=BORDER2, fg=TEXT, font=("Segoe UI", 9), padx=10, pady=5).pack(side="left")
+
+        # Sub-container for list of configured keys
+        self._el_keys_container = tk.Frame(p, bg=BG)
+        self._el_keys_container.pack(fill="x", padx=24, pady=(0, 8))
+        self._refresh_elevenlabs_keys_view()
 
         # ── Behaviour ─────────────────────────────────────────────────
         section("🔧  BEHAVIOUR")
@@ -1967,6 +2254,154 @@ class SettingsPage(tk.Frame):
         except Exception:
             pass
 
+    def _save_el_model(self, _=None):
+        self._cfg["elevenlabs_model_id"] = self._el_model_v.get()
+        CFG.save(self._cfg)
+        self._on_sync()
+
+    def _open_bulk_keys_dialog(self):
+        BulkKeysDialog(self, self._cfg, on_success=self._on_keys_updated, root_window=self.winfo_toplevel())
+
+    def _on_keys_updated(self):
+        self._refresh_elevenlabs_keys_view()
+        self._on_sync()
+
+    def _fetch_elevenlabs_voices_action(self):
+        active_key = ElevenLabsKeyManager.get_active_key(self._cfg)
+        if not active_key:
+            messagebox.showwarning(
+                "No API Key",
+                "No valid ElevenLabs API key found.\nPlease click 'Add Keys in Bulk' to add your key first.",
+                parent=self
+            )
+            return
+
+        import threading
+        def _fetch():
+            try:
+                raw_v, cat_dict = fetch_elevenlabs_voices(active_key)
+                self._cfg["elevenlabs_cached_voices"] = cat_dict
+                CFG.save(self._cfg)
+                sync_elevenlabs_voices(cat_dict)
+                self.after(0, lambda: self._on_voices_fetched_success(len(cat_dict)))
+            except Exception as e:
+                self.after(0, lambda: messagebox.showerror("Fetch Voices Error", str(e), parent=self))
+
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def _on_voices_fetched_success(self, count: int):
+        self._on_sync()
+        Toast(self.winfo_toplevel(),
+              f"Retrieved {count} ElevenLabs voices!\nAdded to Voices catalogue.",
+              bg=SUCCESS_B, fg=SUCCESS_L)
+
+    def _test_all_keys_action(self):
+        stored = ElevenLabsKeyManager.get_stored_keys(self._cfg)
+        if not stored:
+            messagebox.showinfo("No Keys", "No ElevenLabs keys to test.", parent=self)
+            return
+
+        keys = [k["key"] for k in stored]
+        import threading
+        def _test():
+            results = validate_bulk_keys(keys, max_workers=4)
+            res_map = {r["key"]: r for r in results}
+            for k in stored:
+                if k["key"] in res_map:
+                    k.update(res_map[k["key"]])
+            self._cfg["elevenlabs_api_keys"] = stored
+            CFG.save(self._cfg)
+            self.after(0, lambda: self._on_keys_tested_success(len(results)))
+
+        threading.Thread(target=_test, daemon=True).start()
+
+    def _on_keys_tested_success(self, total: int):
+        self._refresh_elevenlabs_keys_view()
+        Toast(self.winfo_toplevel(), f"Re-tested {total} API key(s). Status updated.", bg=INFO_B, fg=ACCENT_L)
+
+    def _delete_el_key(self, key_str: str):
+        stored = ElevenLabsKeyManager.get_stored_keys(self._cfg)
+        stored = [k for k in stored if k["key"] != key_str]
+        self._cfg["elevenlabs_api_keys"] = stored
+        CFG.save(self._cfg)
+        self._refresh_elevenlabs_keys_view()
+        self._on_sync()
+
+    def _test_single_key(self, key_str: str):
+        import threading
+        def _test():
+            res = validate_api_key(key_str)
+            stored = ElevenLabsKeyManager.get_stored_keys(self._cfg)
+            for k in stored:
+                if k["key"] == key_str:
+                    k.update(res)
+            self._cfg["elevenlabs_api_keys"] = stored
+            CFG.save(self._cfg)
+            self.after(0, self._refresh_elevenlabs_keys_view)
+        threading.Thread(target=_test, daemon=True).start()
+
+    def _refresh_elevenlabs_keys_view(self):
+        for w in self._el_keys_container.winfo_children():
+            w.destroy()
+
+        stored = ElevenLabsKeyManager.get_stored_keys(self._cfg)
+        active_key = ElevenLabsKeyManager.get_active_key(self._cfg)
+        valid_keys = [k for k in stored if k.get("status") in ("valid", "active")]
+
+        # Update status line
+        if not stored:
+            self._el_status_v.set("No keys configured. Click 'Add Keys in Bulk' to get started.")
+        else:
+            tot_chars = sum(k.get("characters_left", 0) for k in valid_keys if k.get("characters_left", 0) > 0)
+            self._el_status_v.set(
+                f"{len(stored)} keys ({len(valid_keys)} valid) · Active: {mask_key(active_key) if active_key else 'None'} · {tot_chars:,} chars quota left"
+            )
+
+        if not stored:
+            empty_f = tk.Frame(self._el_keys_container, bg=CARD, highlightthickness=1, highlightbackground=BORDER)
+            empty_f.pack(fill="x", pady=2)
+            tk.Label(empty_f, text="No ElevenLabs API keys stored yet.", bg=CARD, fg=TEXT3,
+                     font=("Segoe UI", 9)).pack(pady=10)
+            return
+
+        for k in stored:
+            k_row = tk.Frame(self._el_keys_container, bg=CARD, highlightthickness=1, highlightbackground=BORDER)
+            k_row.pack(fill="x", pady=2)
+
+            status = k.get("status", "valid")
+            if status in ("valid", "active"):
+                badge_lbl = "✓ Valid"
+                badge_col = SUCCESS
+            elif status == "quota_exhausted":
+                badge_lbl = "⚠ Quota Exceeded"
+                badge_col = WARNING
+            else:
+                badge_lbl = "✗ Invalid"
+                badge_col = ERROR
+
+            tk.Label(k_row, text=badge_lbl, bg=CARD, fg=badge_col,
+                     font=("Segoe UI", 9, "bold"), width=15, anchor="w").pack(side="left", padx=(10, 4), pady=6)
+
+            is_active = (k.get("key") == active_key)
+            active_marker = " [PRIMARY]" if is_active else ""
+            tk.Label(k_row, text=f"{k.get('masked', '')}{active_marker}", bg=CARD,
+                     fg=ACCENT_L if is_active else TEXT,
+                     font=("Consolas", 9, "bold"), width=20, anchor="w").pack(side="left", padx=(0, 8))
+
+            chars_left = k.get("characters_left", -1)
+            char_lim = k.get("character_limit", -1)
+            tier_str = k.get("tier", "unknown").capitalize()
+            quota_txt = f"{tier_str} Tier · {chars_left:,} / {char_lim:,} chars left" if chars_left >= 0 else k.get("message", "")
+
+            tk.Label(k_row, text=quota_txt, bg=CARD, fg=TEXT2,
+                     font=("Segoe UI", 9), anchor="w").pack(side="left", fill="x", expand=True, padx=(0, 6))
+
+            _btn(k_row, "Test", lambda ks=k["key"]: self._test_single_key(ks),
+                 bg=BORDER2, fg=TEXT, font=("Segoe UI", 8), padx=6, pady=2).pack(side="right", padx=(0, 4))
+
+            _btn(k_row, "Delete", lambda ks=k["key"]: self._delete_el_key(ks),
+                 bg="#441a1a", fg="#ff8888", font=("Segoe UI", 8), padx=6, pady=2).pack(side="right", padx=(0, 4))
+
     def refresh(self):
         voices = list(VOICE_CATALOGUE.keys())
         v = self._cfg.get("voice", voices[0])
@@ -1977,6 +2412,7 @@ class SettingsPage(tk.Frame):
         for key, bv in self._bool_vars.items():
             bv.set(bool(self._cfg.get(key, True)))
         self._chunk_v.set(int(self._cfg.get("chunk_limit", 250)))
+        self._refresh_elevenlabs_keys_view()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2349,8 +2785,10 @@ class App:
         self._status(f"Voice → {name}")
 
     def _on_settings_sync(self):
+        self._synth.refresh_voice_list()
         self._synth.set_voice(self._cfg.get("voice", ""))
         self._synth.sync_speed(float(self._cfg.get("speed", 1.0)))
+        self._vpage.refresh()
 
     # ── Misc ──────────────────────────────────────────────────────────────────
 
