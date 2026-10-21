@@ -10,7 +10,7 @@ import os, subprocess, sys, tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import ttk, filedialog, messagebox
-from typing import Callable
+from typing import Callable, Optional
 
 import config.settings as CFG
 from config.settings import VOICE_CATALOGUE, APP_VERSION, resolve_voice, extract_voice_from_meta, sync_elevenlabs_voices
@@ -340,7 +340,10 @@ class JobCard(tk.Frame):
         meta.grid(row=1, column=1, sticky="ew", pady=(2, 0))
 
         voice_short = self.job.voice.split("·")[0].split("(")[0].strip()
-        tk.Label(meta, text=f"🎙 {voice_short}", bg=CARD, fg=TEXT2,
+        info = VOICE_CATALOGUE.get(self.job.voice, {})
+        is_el = (info.get("backend") == "elevenlabs" or "elevenlabs" in self.job.voice.lower())
+        mode_tag = "☁️ EL" if is_el else "💻 Local"
+        tk.Label(meta, text=f"{mode_tag} · 🎙 {voice_short}", bg=CARD, fg=TEXT2,
                  font=("Segoe UI", 9)).pack(side="left")
         tk.Label(meta, text=f"  {self.job.speed}×", bg=CARD, fg=TEXT3,
                  font=("Segoe UI", 9)).pack(side="left")
@@ -504,6 +507,137 @@ class VoiceCard(tk.Frame):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  Dialog: QueueModeDialog (Select Generation Mode)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class QueueModeDialog(tk.Toplevel):
+    """
+    Modal dialog prompting the user to select the audio generation mode
+    (Local Offline vs ElevenLabs Cloud API) when queueing jobs or scanning project folders.
+    """
+    def __init__(self, parent, default_mode: str = "local", count: int = 1):
+        super().__init__(parent)
+        self.transient(parent)
+        self.title("Select Queue Generation Mode")
+        self.geometry("520x420")
+        self.minsize(480, 390)
+        self.configure(bg=BG)
+        self.result: Optional[str] = None
+
+        if default_mode not in ("local", "elevenlabs"):
+            default_mode = "local"
+        self._mode_var = tk.StringVar(value=default_mode)
+        self._count = count
+        self._build()
+        self.grab_set()
+
+        # Center on parent window
+        self.update_idletasks()
+        try:
+            px = parent.winfo_rootx() + (parent.winfo_width() - self.winfo_width()) // 2
+            py = parent.winfo_rooty() + (parent.winfo_height() - self.winfo_height()) // 2
+            self.geometry(f"+{max(0, px)}+{max(0, py)}")
+        except Exception:
+            pass
+
+        self.bind("<Return>", lambda e: self._on_confirm())
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.wait_window()
+
+    def _build(self):
+        # Header
+        hdr = tk.Frame(self, bg=BG)
+        hdr.pack(fill="x", padx=24, pady=(20, 8))
+        tk.Label(hdr, text="Select Generation Mode", bg=BG, fg=TEXT,
+                 font=("Segoe UI", 16, "bold")).pack(anchor="w")
+        subtext = (
+            f"Ready to queue {self._count} project folder{'s' if self._count != 1 else ''}.\n"
+            "Choose which synthesis engine to generate audio for this batch:"
+        )
+        tk.Label(hdr, text=subtext, bg=BG, fg=TEXT2,
+                 font=("Segoe UI", 9), justify="left").pack(anchor="w", pady=(4, 0))
+
+        _sep(self).pack(fill="x", padx=24, pady=(8, 16))
+
+        # Body container for mode options
+        opts = tk.Frame(self, bg=BG)
+        opts.pack(fill="x", padx=24)
+
+        # ── Option 1: Local Mode ──
+        self._card_local = tk.Frame(opts, bg=CARD, highlightthickness=2,
+                                    highlightbackground=ACCENT if self._mode_var.get() == "local" else BORDER2,
+                                    padx=14, pady=12, cursor="hand2")
+        self._card_local.pack(fill="x", pady=(0, 10))
+
+        r_loc = tk.Radiobutton(self._card_local, variable=self._mode_var, value="local",
+                               bg=CARD, activebackground=CARD, selectcolor=CARD,
+                               command=self._update_selection)
+        r_loc.pack(side="left", anchor="n", padx=(0, 10), pady=2)
+
+        info_loc = tk.Frame(self._card_local, bg=CARD)
+        info_loc.pack(side="left", fill="x", expand=True)
+        tk.Label(info_loc, text="💻  Local (Offline Neural Engine)", bg=CARD, fg=TEXT,
+                 font=("Segoe UI", 11, "bold"), anchor="w").pack(fill="x")
+        tk.Label(info_loc,
+                 text="Uses Kokoro / Piper offline neural models · Zero API credits used · Fast on GPU/CPU.\n"
+                      "Each folder uses the preset's assigned offline voice.",
+                 bg=CARD, fg=TEXT2, font=("Segoe UI", 9), justify="left", anchor="w").pack(fill="x", pady=(2, 0))
+
+        self._card_local.bind("<Button-1>", lambda e: self._select_mode("local"))
+        for child in info_loc.winfo_children():
+            child.bind("<Button-1>", lambda e: self._select_mode("local"))
+
+        # ── Option 2: ElevenLabs Mode ──
+        self._card_el = tk.Frame(opts, bg=CARD, highlightthickness=2,
+                                 highlightbackground=ACCENT if self._mode_var.get() == "elevenlabs" else BORDER2,
+                                 padx=14, pady=12, cursor="hand2")
+        self._card_el.pack(fill="x", pady=(0, 14))
+
+        r_el = tk.Radiobutton(self._card_el, variable=self._mode_var, value="elevenlabs",
+                              bg=CARD, activebackground=CARD, selectcolor=CARD,
+                              command=self._update_selection)
+        r_el.pack(side="left", anchor="n", padx=(0, 10), pady=2)
+
+        info_el = tk.Frame(self._card_el, bg=CARD)
+        info_el.pack(side="left", fill="x", expand=True)
+        tk.Label(info_el, text="☁️  ElevenLabs (Cloud API Engine)", bg=CARD, fg=TEXT,
+                 font=("Segoe UI", 11, "bold"), anchor="w").pack(fill="x")
+        tk.Label(info_el,
+                 text="High fidelity studio voices · Multi-key failover & chunk stitching enabled.\n"
+                      "Each folder uses the preset's assigned ElevenLabs voice.",
+                 bg=CARD, fg=TEXT2, font=("Segoe UI", 9), justify="left", anchor="w").pack(fill="x", pady=(2, 0))
+
+        self._card_el.bind("<Button-1>", lambda e: self._select_mode("elevenlabs"))
+        for child in info_el.winfo_children():
+            child.bind("<Button-1>", lambda e: self._select_mode("elevenlabs"))
+
+        _sep(self).pack(fill="x", padx=24, pady=(6, 14))
+
+        # Bottom buttons
+        btn_bar = tk.Frame(self, bg=BG)
+        btn_bar.pack(fill="x", padx=24, pady=(0, 16))
+
+        _btn(btn_bar, "🚀  Confirm & Add to Queue", self._on_confirm,
+             bg=ACCENT, fg="white", font=("Segoe UI", 10, "bold"), padx=16, pady=8).pack(side="right")
+
+        _btn(btn_bar, "Cancel", self.destroy,
+             bg=CARD, fg=TEXT2, font=("Segoe UI", 10), padx=14, pady=8).pack(side="right", padx=(0, 8))
+
+    def _select_mode(self, mode: str):
+        self._mode_var.set(mode)
+        self._update_selection()
+
+    def _update_selection(self):
+        m = self._mode_var.get()
+        self._card_local.configure(highlightbackground=ACCENT if m == "local" else BORDER2)
+        self._card_el.configure(highlightbackground=ACCENT if m == "elevenlabs" else BORDER2)
+
+    def _on_confirm(self):
+        self.result = self._mode_var.get()
+        self.destroy()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  Page: Synthesize
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -524,7 +658,9 @@ class SynthesizePage(tk.Frame):
         self._src        = "text_input"
         self._file_list: list[tuple] = []   # (path, stem, text)
         self._tab        = "text"           # "text" | "files"
+        self._generation_mode = self._cfg.get("generation_mode", "local")
         self._build()
+        self._set_generation_mode(self._generation_mode)
 
     def _build(self):
         # ── Page header ────────────────────────────────────────────────
@@ -598,35 +734,54 @@ class SynthesizePage(tk.Frame):
         right.grid(row=0, column=2, sticky="nsew")
         right.columnconfigure(0, weight=1)
 
-        row_n = 0
-
         def sect(t, r):
             tk.Label(right, text=t, bg=BG, fg=TEXT2,
                      font=("Segoe UI", 8, "bold")).grid(
                          row=r, column=0, sticky="w", pady=(10, 3))
 
+        # ── GENERATION MODE ───────────────────────────────────────────
+        sect("⚙  GENERATION MODE", 0)
+        mode_row = tk.Frame(right, bg=BG)
+        mode_row.grid(row=1, column=0, sticky="ew", pady=(2, 4))
+        mode_row.columnconfigure(0, weight=1)
+        mode_row.columnconfigure(1, weight=1)
+
+        self._btn_mode_local = tk.Button(
+            mode_row, text="💻  Local (Offline)",
+            command=lambda: self._set_generation_mode("local"),
+            font=("Segoe UI", 9, "bold"), relief="flat", cursor="hand2", padx=6, pady=6, bd=0
+        )
+        self._btn_mode_local.grid(row=0, column=0, sticky="ew", padx=(0, 3))
+
+        self._btn_mode_el = tk.Button(
+            mode_row, text="☁️  ElevenLabs (API)",
+            command=lambda: self._set_generation_mode("elevenlabs"),
+            font=("Segoe UI", 9, "bold"), relief="flat", cursor="hand2", padx=6, pady=6, bd=0
+        )
+        self._btn_mode_el.grid(row=0, column=1, sticky="ew", padx=(3, 0))
+
         # Voice
-        sect("🎙  VOICE", 0)
+        sect("🎙  VOICE", 2)
         voices = list(VOICE_CATALOGUE.keys())
         self._voice_v = tk.StringVar(value=self._cfg.get("voice", voices[0]))
         if self._voice_v.get() not in voices:
             self._voice_v.set(voices[0])
         cb = ttk.Combobox(right, textvariable=self._voice_v,
                            values=voices, state="readonly", font=("Segoe UI", 9))
-        cb.grid(row=1, column=0, sticky="ew")
+        cb.grid(row=3, column=0, sticky="ew")
         cb.bind("<<ComboboxSelected>>", self._on_voice_changed)
         self._voice_cb = cb
 
         self._vinfo_v = tk.StringVar()
         self._vinfo_lbl = tk.Label(right, textvariable=self._vinfo_v,
                                     bg=BG, fg=TEXT2, font=("Segoe UI", 9))
-        self._vinfo_lbl.grid(row=2, column=0, sticky="w", pady=(2, 0))
+        self._vinfo_lbl.grid(row=4, column=0, sticky="w", pady=(2, 0))
         self._refresh_vinfo()
 
         # Speed
-        sect("🎚  SPEED", 3)
+        sect("🎚  SPEED", 5)
         spd_row = tk.Frame(right, bg=BG)
-        spd_row.grid(row=4, column=0, sticky="ew")
+        spd_row.grid(row=6, column=0, sticky="ew")
         spd_row.columnconfigure(0, weight=1)
         self._speed_v = tk.DoubleVar(value=float(self._cfg.get("speed", 1.0)))
         ttk.Scale(spd_row, from_=0.5, to=2.0, orient="horizontal",
@@ -639,7 +794,7 @@ class SynthesizePage(tk.Frame):
                  width=5).grid(row=0, column=1, padx=(6, 0))
 
         ticks = tk.Frame(right, bg=BG)
-        ticks.grid(row=5, column=0, sticky="ew")
+        ticks.grid(row=7, column=0, sticky="ew")
         ticks.columnconfigure(0, weight=1); ticks.columnconfigure(1, weight=1)
         tk.Label(ticks, text="0.5×", bg=BG, fg=TEXT3,
                  font=("Segoe UI", 8)).grid(row=0, column=0, sticky="w")
@@ -647,9 +802,9 @@ class SynthesizePage(tk.Frame):
                  font=("Segoe UI", 8)).grid(row=0, column=1, sticky="e")
 
         # Output folder
-        sect("📁  OUTPUT FOLDER", 6)
+        sect("📁  OUTPUT FOLDER", 8)
         of_row = tk.Frame(right, bg=BG)
-        of_row.grid(row=8, column=0, sticky="ew")
+        of_row.grid(row=9, column=0, sticky="ew")
         of_row.columnconfigure(0, weight=1)
         self._outdir_v = tk.StringVar(value=self._cfg.get("output_dir", ""))
         tk.Label(of_row, textvariable=self._outdir_v,
@@ -660,26 +815,25 @@ class SynthesizePage(tk.Frame):
              bg=BORDER2, fg=TEXT, hover=BORDER,
              font=("Segoe UI", 9), padx=8, pady=4).grid(row=0, column=1, padx=(4, 0))
 
-        
         # Scan Master Folder button
         _btn(right, "🔍  Scan Master Folder…", self._scan_master_folder_dialog,
              bg=ACCENT, fg="white", hover=CARD_HVR,
              font=("Segoe UI", 10, "bold"), padx=12, pady=7).grid(
-                 row=7, column=0, sticky="ew", pady=(8, 4))
+                 row=10, column=0, sticky="ew", pady=(8, 4))
 
         # Direct Project Folders button
-        _btn(right, "📁  Scan Master Folder...", self._load_project_folders_dialog,
+        _btn(right, "📁  Add Project Folders…", self._load_project_folders_dialog,
              bg=ACCENT_BG, fg=ACCENT_L, hover=CARD_HVR,
              font=("Segoe UI", 10, "bold"), padx=12, pady=7).grid(
-                 row=9, column=0, sticky="ew", pady=(8, 4))
+                 row=11, column=0, sticky="ew", pady=(4, 4))
 
-        _sep(right).grid(row=10, column=0, sticky="ew", pady=6)
+        _sep(right).grid(row=12, column=0, sticky="ew", pady=6)
 
         # Action buttons
         self._btn_add = _btn(right, "➕  Add to Queue", self._add_single,
                               bg=ACCENT, fg="white", hover=ACCENT_L,
                               font=("Segoe UI", 11, "bold"), padx=16, pady=12)
-        self._btn_add.grid(row=11, column=0, sticky="ew")
+        self._btn_add.grid(row=13, column=0, sticky="ew")
         Tooltip(self._btn_add, "Add current text/files to queue  [Ctrl+Enter]")
 
         self._btn_queue_all = _btn(right, "📋  Queue All Files",
@@ -687,12 +841,12 @@ class SynthesizePage(tk.Frame):
                                     bg=ACCENT_BG, fg=ACCENT_L,
                                     hover=CARD_HVR, font=("Segoe UI", 10, "bold"),
                                     padx=16, pady=8)
-        # shown only in Files tab
+        # shown only in Files tab (row=14)
 
         _btn(right, "🗑  Clear", self._clear_all,
              bg=CARD, fg=TEXT2, hover=CARD_HVR,
              font=("Segoe UI", 9), padx=10, pady=5).grid(
-                 row=13, column=0, sticky="ew", pady=(6, 0))
+                 row=15, column=0, sticky="ew", pady=(6, 0))
 
         # Keyboard bindings
         self.bind_all("<Control-Return>", lambda e: self._add_single())
@@ -722,7 +876,7 @@ class SynthesizePage(tk.Frame):
 
         # File load buttons at bottom of text panel
         tbf = tk.Frame(p, bg=BG); tbf.grid(row=1, column=0, sticky="ew", pady=(6, 0))
-        _btn(tbf, "📁  Scan Master Folder...", self._load_project_folders_dialog,
+        _btn(tbf, "📁  Add Project Folder(s)…", self._load_project_folders_dialog,
              bg=ACCENT_BG, fg=ACCENT_L, hover=CARD_HVR,
              font=("Segoe UI", 9, "bold"), padx=10, pady=5).pack(side="right", padx=(6, 0))
         _btn(tbf, "📂  Load File(s)…", self._load_files_dialog,
@@ -738,7 +892,7 @@ class SynthesizePage(tk.Frame):
         _btn(ctrl, "📂  Add Files…", self._load_files_dialog,
              bg=ACCENT, fg="white", hover=ACCENT_L,
              font=("Segoe UI", 9, "bold"), padx=10, pady=5).pack(side="left")
-        _btn(ctrl, "📁  Scan Master Folder...", self._load_project_folders_dialog,
+        _btn(ctrl, "📁  Add Project Folder(s)…", self._load_project_folders_dialog,
              bg=ACCENT_BG, fg=ACCENT_L, hover=CARD_HVR,
              font=("Segoe UI", 9, "bold"), padx=10, pady=5).pack(side="left", padx=(6, 0))
         _btn(ctrl, "✕  Clear All", self._clear_file_list,
@@ -821,7 +975,7 @@ class SynthesizePage(tk.Frame):
         else:
             self._text_panel.grid_forget()
             self._files_panel.grid(row=1, column=0, sticky="nsew")
-            self._btn_queue_all.grid(row=11, column=0, sticky="ew", pady=(6, 0))
+            self._btn_queue_all.grid(row=14, column=0, sticky="ew", pady=(6, 0))
 
     # ── Placeholder helpers ────────────────────────────────────────────────────
 
@@ -881,6 +1035,18 @@ class SynthesizePage(tk.Frame):
             return
             
         folders = scan_master_folder(master_dir)
+        if not folders:
+            self._status("No valid project folders found in master folder.")
+            return
+
+        dlg = QueueModeDialog(self.winfo_toplevel(), default_mode=self._generation_mode, count=len(folders))
+        if not dlg.result:
+            log.info("Queueing cancelled: generation mode dialog closed.")
+            return
+
+        selected_mode = dlg.result
+        self._set_generation_mode(selected_mode)
+
         count = 0
         skipped = 0
         for folder in folders:
@@ -909,7 +1075,7 @@ class SynthesizePage(tk.Frame):
                     with open(meta_path, 'r', encoding='utf-8') as f:
                         meta = json.load(f)
 
-                    voice = extract_voice_from_meta(meta, default_voice=voice)
+                    voice = extract_voice_from_meta(meta, default_voice=voice, mode=selected_mode)
                 except Exception as e:
                     log.error(f"Failed to read {meta_path.name} for voice selection: {e}")
 
@@ -927,10 +1093,10 @@ class SynthesizePage(tk.Frame):
             )
             self._qm.enqueue(job)
             count += 1
-            log.info(f"Project folder queued from scan: {folder.name} voice='{voice}'")
+            log.info(f"Project folder queued from scan [{selected_mode}]: {folder.name} voice='{voice}'")
 
         if count > 0:
-            msg = f"✓  {count} project folder(s) added to queue from master"
+            msg = f"✓  {count} project folder(s) added to queue [{selected_mode.capitalize()} mode]"
             if skipped:
                 msg += f"  ({skipped} skipped)"
             self._status(msg)
@@ -970,6 +1136,18 @@ class SynthesizePage(tk.Frame):
                     if sub.is_dir() and ((sub / "project.json").exists() or (sub / "metadata.json").exists() or (sub / "script.txt").exists()):
                         if sub not in expanded_folders:
                             expanded_folders.append(sub)
+
+        if not expanded_folders:
+            self._status("No valid project folders found.")
+            return
+
+        dlg = QueueModeDialog(self.winfo_toplevel(), default_mode=self._generation_mode, count=len(expanded_folders))
+        if not dlg.result:
+            log.info("Queueing cancelled: generation mode dialog closed.")
+            return
+
+        selected_mode = dlg.result
+        self._set_generation_mode(selected_mode)
 
         for folder in expanded_folders:
             script_path = folder / "script.txt"
@@ -1017,8 +1195,8 @@ class SynthesizePage(tk.Frame):
                         skipped += 1
                         continue
 
-                    # Read voice preference from metadata (voice_name, voice_id, voice, tts_voice, preset_name)
-                    voice = extract_voice_from_meta(meta, default_voice=voice)
+                    # Read voice preference from metadata respecting selected generation mode
+                    voice = extract_voice_from_meta(meta, default_voice=voice, mode=selected_mode)
                 except Exception as e:
                     log.error(f"Failed to read {meta_path.name} for voice selection: {e}")
 
@@ -1046,10 +1224,10 @@ class SynthesizePage(tk.Frame):
             )
             self._qm.enqueue(job)
             count += 1
-            log.info(f"Project folder queued: {folder.name}  voice='{voice}'")
+            log.info(f"Project folder queued [{selected_mode}]: {folder.name}  voice='{voice}'")
 
         if count > 0:
-            msg = f"✓  {count} project folder(s) added to queue"
+            msg = f"✓  {count} project folder(s) added to queue [{selected_mode.capitalize()} mode]"
             if skipped:
                 msg += f"  ({skipped} skipped)"
             self._status(msg)
@@ -1084,10 +1262,11 @@ class SynthesizePage(tk.Frame):
         if not self._file_list:
             self._status("⚠  No files loaded. Use  📂 Add Files…  first.")
             return
+        mode = self._generation_mode
         default_voice = self._voice_v.get()
         speed  = round(float(self._speed_v.get()), 1)
         outdir = self._cfg.get("output_dir", str(Path.home() / "tts_output"))
-        self._cfg.update({"voice": default_voice, "speed": speed})
+        self._cfg.update({"voice": default_voice, "speed": speed, "generation_mode": mode})
         CFG.save(self._cfg)
         count = 0
         for path, stem, text in self._file_list:
@@ -1108,7 +1287,7 @@ class SynthesizePage(tk.Frame):
                     import json
                     with open(meta_path, 'r', encoding='utf-8') as f:
                         meta = json.load(f)
-                    file_voice = extract_voice_from_meta(meta, default_voice=default_voice)
+                    file_voice = extract_voice_from_meta(meta, default_voice=default_voice, mode=mode)
                     file_out = str(parent_dir / "audio.wav")
                     file_proj_folder = str(parent_dir)
                 except Exception as e:
@@ -1133,15 +1312,16 @@ class SynthesizePage(tk.Frame):
             count += 1
         self._file_list.clear()
         self._rebuild_file_list()
-        self._status(f"✓  {count} file job{'s' if count > 1 else ''} added to queue")
+        self._status(f"✓  {count} file job{'s' if count > 1 else ''} added to queue [{mode.capitalize()} mode]")
         self._navigate("queue")
 
     def _queue_text(self, text: str, source: str):
+        mode = self._generation_mode
         default_voice = self._voice_v.get()
         voice = default_voice
         speed = round(float(self._speed_v.get()), 1)
         outdir = self._cfg.get("output_dir", str(Path.home() / "tts_output"))
-        self._cfg.update({"voice": default_voice, "speed": speed})
+        self._cfg.update({"voice": default_voice, "speed": speed, "generation_mode": mode})
         CFG.save(self._cfg)
 
         out_path = None
@@ -1158,7 +1338,7 @@ class SynthesizePage(tk.Frame):
                     import json
                     with open(meta_path, 'r', encoding='utf-8') as f:
                         meta = json.load(f)
-                    voice = extract_voice_from_meta(meta, default_voice=default_voice)
+                    voice = extract_voice_from_meta(meta, default_voice=default_voice, mode=mode)
                     out_path = str(parent_dir / "audio.wav")
                     proj_folder = str(parent_dir)
         except Exception:
@@ -1175,9 +1355,9 @@ class SynthesizePage(tk.Frame):
                      source_name=Path(source).stem if Path(source).exists() else source,
                      project_folder=proj_folder)
         self._qm.enqueue(job)
-        self._status(f"✓  Job {job.job_id} added to queue (voice='{voice}')")
+        self._status(f"✓  Job {job.job_id} added to queue [{mode.capitalize()} mode · voice='{voice}']")
 
-    # ── Misc ──────────────────────────────────────────────────────────────────
+        # ── Misc ──────────────────────────────────────────────────────────────────
 
     def _clear_text_only(self):
         self._txt.delete("1.0", "end")
@@ -1218,25 +1398,84 @@ class SynthesizePage(tk.Frame):
         lang = lang_map.get(info.get("lang", "").lower(), info.get("lang", ""))
         self._vinfo_v.set(f"{backend}  ·  {vid}  ·  {g}  ·  {lang}")
 
+    def _set_generation_mode(self, mode: str):
+        if mode not in ("local", "elevenlabs"):
+            mode = "local"
+        self._generation_mode = mode
+        self._cfg["generation_mode"] = mode
+        CFG.save(self._cfg)
+
+        if mode == "local":
+            self._btn_mode_local.configure(
+                bg=ACCENT, fg="white", activebackground=ACCENT_L, activeforeground="white"
+            )
+            self._btn_mode_el.configure(
+                bg=CARD, fg=TEXT2, activebackground=CARD_HVR, activeforeground=TEXT
+            )
+            self._btn_add.configure(text="➕  Add to Queue [Local]")
+            self._btn_queue_all.configure(text="📋  Queue All Files [Local]")
+        else:
+            self._btn_mode_local.configure(
+                bg=CARD, fg=TEXT2, activebackground=CARD_HVR, activeforeground=TEXT
+            )
+            self._btn_mode_el.configure(
+                bg=ACCENT, fg="white", activebackground=ACCENT_L, activeforeground="white"
+            )
+            self._btn_add.configure(text="➕  Add to Queue [ElevenLabs]")
+            self._btn_queue_all.configure(text="📋  Queue All Files [ElevenLabs]")
+
+        self._filter_voices_by_mode(mode)
+
+    def _filter_voices_by_mode(self, mode: str):
+        if mode == "elevenlabs":
+            voices = [k for k, v in VOICE_CATALOGUE.items() if v.get("backend") == "elevenlabs"]
+        else:
+            voices = [k for k, v in VOICE_CATALOGUE.items() if v.get("backend") != "elevenlabs"]
+
+        if not voices:
+            voices = list(VOICE_CATALOGUE.keys())
+
+        if hasattr(self, "_voice_cb"):
+            self._voice_cb["values"] = voices
+            cur = self._voice_v.get()
+            if cur not in voices:
+                cfg_fav = self._cfg.get("elevenlabs_default_voice" if mode == "elevenlabs" else "voice")
+                if cfg_fav in voices:
+                    self._voice_v.set(cfg_fav)
+                elif voices:
+                    self._voice_v.set(voices[0])
+            self._refresh_vinfo()
+
     def _on_voice_changed(self, _):
         self._refresh_vinfo()
-        self._cfg["voice"] = self._voice_v.get()
+        v = self._voice_v.get()
+        if self._generation_mode == "elevenlabs":
+            self._cfg["elevenlabs_default_voice"] = v
+        else:
+            self._cfg["voice"] = v
         CFG.save(self._cfg)
 
     def refresh_voice_list(self):
         """Reload combobox items when voices are added or updated."""
-        voices = list(VOICE_CATALOGUE.keys())
-        if hasattr(self, "_voice_cb"):
-            self._voice_cb["values"] = voices
-        cur = self._voice_v.get()
-        if cur not in voices and voices:
-            self._voice_v.set(voices[0])
-        self._refresh_vinfo()
+        self._filter_voices_by_mode(self._generation_mode)
 
     def set_voice(self, name: str):
         """Called from Voices page."""
+        if name not in VOICE_CATALOGUE:
+            resolved = resolve_voice(name)
+            if resolved and resolved in VOICE_CATALOGUE:
+                name = resolved
         if name in VOICE_CATALOGUE:
+            backend = VOICE_CATALOGUE[name].get("backend", "kokoro")
+            target_mode = "elevenlabs" if backend == "elevenlabs" else "local"
+            if target_mode != self._generation_mode:
+                self._set_generation_mode(target_mode)
             self._voice_v.set(name)
+            if target_mode == "elevenlabs":
+                self._cfg["elevenlabs_default_voice"] = name
+            else:
+                self._cfg["voice"] = name
+            CFG.save(self._cfg)
             self._refresh_vinfo()
 
     def sync_speed(self, speed: float):
@@ -2038,6 +2277,15 @@ class SettingsPage(tk.Frame):
 
         # ── Voice & Speed ──────────────────────────────────────────────
         section("🎙  DEFAULT VOICE & SPEED")
+        f_m = row_frame()
+        tk.Label(f_m, text="Default generation mode:", bg=BG, fg=TEXT2,
+                 font=("Segoe UI", 10), width=22, anchor="w").grid(row=0, column=0)
+        self._mode_cfg_v = tk.StringVar(value=self._cfg.get("generation_mode", "local"))
+        mode_cb = ttk.Combobox(f_m, textvariable=self._mode_cfg_v, values=["local", "elevenlabs"],
+                               state="readonly", font=("Segoe UI", 10), width=18)
+        mode_cb.grid(row=0, column=1, sticky="w", padx=(8, 0))
+        mode_cb.bind("<<ComboboxSelected>>", self._save_mode)
+
         f = row_frame()
         tk.Label(f, text="Default voice:", bg=BG, fg=TEXT2,
                  font=("Segoe UI", 10), width=22, anchor="w").grid(row=0, column=0)
@@ -2230,6 +2478,11 @@ class SettingsPage(tk.Frame):
         tmpl = self._tmpl_v.get().strip() or "{name}_{ts}"
         self._cfg["output_template"] = tmpl
         CFG.save(self._cfg)
+
+    def _save_mode(self, _=None):
+        self._cfg["generation_mode"] = self._mode_cfg_v.get()
+        CFG.save(self._cfg)
+        self._on_sync()
 
     def _save_voice(self, _=None):
         self._cfg["voice"] = self._voice_v.get()
@@ -2785,6 +3038,8 @@ class App:
         self._status(f"Voice → {name}")
 
     def _on_settings_sync(self):
+        m = self._cfg.get("generation_mode", "local")
+        self._synth._set_generation_mode(m)
         self._synth.refresh_voice_list()
         self._synth.set_voice(self._cfg.get("voice", ""))
         self._synth.sync_speed(float(self._cfg.get("speed", 1.0)))

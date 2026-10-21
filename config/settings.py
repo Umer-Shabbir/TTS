@@ -146,6 +146,7 @@ DEFAULTS: dict = {
     "elevenlabs_api_keys": [],
     "elevenlabs_model_id": "eleven_multilingual_v2",
     "elevenlabs_cached_voices": {},
+    "generation_mode":   "local",
 }
 
 def resolve_voice(voice_input: str, default: str = DEFAULT_VOICE) -> str:
@@ -201,13 +202,47 @@ def resolve_voice(voice_input: str, default: str = DEFAULT_VOICE) -> str:
     return default
 
 
-def extract_voice_from_meta(meta: dict, default_voice: str = DEFAULT_VOICE) -> str:
+def extract_voice_from_meta(meta: dict, default_voice: str = DEFAULT_VOICE, mode: str = None) -> str:
     """
     Extract and resolve the target TTS voice from project metadata.
     Checks voice_name, voice_id, voice, tts_voice, speaker, speaker_voice, preset_name.
+    If `mode` is provided ('elevenlabs' or 'local'), strictly respects that generation mode for the preset.
     """
     if not isinstance(meta, dict):
         return default_voice
+
+    preset_name = meta.get("preset_name")
+    if preset_name:
+        registry_path = Path("H:/Automation/Presets/master_presets_registry.json")
+        if not registry_path.exists():
+            registry_path = Path(__file__).resolve().parent.parent.parent / "Presets" / "master_presets_registry.json"
+        if registry_path.exists():
+            try:
+                data = json.loads(registry_path.read_text(encoding="utf-8-sig"))
+                preset_info = data.get(preset_name, {})
+                use_el = (
+                    mode == "elevenlabs"
+                    or (mode is None and (
+                        meta.get("use_elevenlabs")
+                        or meta.get("backend") == "elevenlabs"
+                        or meta.get("voice_backend") == "elevenlabs"
+                    ))
+                )
+                if use_el and preset_info.get("elevenlabs_voice"):
+                    return resolve_voice(str(preset_info.get("elevenlabs_voice")), default=default_voice)
+                elif not use_el and preset_info.get("offline_voice"):
+                    return resolve_voice(str(preset_info.get("offline_voice")), default=default_voice)
+
+                preset_voice = (
+                    preset_info.get("offline_voice")
+                    or preset_info.get("voice_name")
+                    or preset_info.get("voice_id")
+                    or preset_info.get("elevenlabs_voice")
+                )
+                if preset_voice:
+                    return resolve_voice(str(preset_voice), default=default_voice)
+            except Exception:
+                pass
 
     raw_voice = (
         meta.get("voice_name")
@@ -222,33 +257,6 @@ def extract_voice_from_meta(meta: dict, default_voice: str = DEFAULT_VOICE) -> s
         resolved = resolve_voice(str(raw_voice), default=default_voice)
         if resolved:
             return resolved
-
-    preset_name = meta.get("preset_name")
-    if preset_name:
-        registry_path = Path("H:/Automation/Presets/master_presets_registry.json")
-        if not registry_path.exists():
-            registry_path = Path(__file__).resolve().parent.parent.parent / "Presets" / "master_presets_registry.json"
-        if registry_path.exists():
-            try:
-                data = json.loads(registry_path.read_text(encoding="utf-8-sig"))
-                preset_info = data.get(preset_name, {})
-                use_el = (
-                    meta.get("use_elevenlabs")
-                    or meta.get("backend") == "elevenlabs"
-                    or meta.get("voice_backend") == "elevenlabs"
-                )
-                if use_el and preset_info.get("elevenlabs_voice"):
-                    return resolve_voice(str(preset_info.get("elevenlabs_voice")), default=default_voice)
-                preset_voice = (
-                    preset_info.get("offline_voice")
-                    or preset_info.get("voice_name")
-                    or preset_info.get("voice_id")
-                    or preset_info.get("elevenlabs_voice")
-                )
-                if preset_voice:
-                    return resolve_voice(str(preset_voice), default=default_voice)
-            except Exception:
-                pass
 
     return default_voice
 
